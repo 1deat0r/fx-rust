@@ -29,6 +29,9 @@ fn serialize_content(m: &Message) -> Vec<Value> {
             super::ContentBlock::ToolResult { id, content } => {
                 parts.push(json!({"type": "tool_result", "tool_use_id": id, "content": content}));
             }
+            super::ContentBlock::Image { media_type, data } => {
+                parts.push(json!({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}));
+            }
         }
     }
     parts

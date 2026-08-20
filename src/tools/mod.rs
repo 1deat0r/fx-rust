@@ -5,7 +5,7 @@
 //!
 //! Sensitive tools (require the permission gate): write_file, edit_file,
 //! delete_file, rename_file, copy_file, create_folder, run_command,
-//! open_file, install_skill, vision.
+//! open_file, install_skill, view_image.
 //! Non-sensitive: read_file, list_files, glob_files, grep_files, file_info,
 //! web_search, web_fetch, memory, skill, ask_user_question.
 
@@ -14,6 +14,7 @@ pub mod filesystem;
 pub mod memory;
 pub mod question;
 pub mod skill;
+pub mod vision;
 pub mod web;
 
 use std::path::{Path, PathBuf};
@@ -99,6 +100,7 @@ pub async fn execute(
         "ask_user_question" => question::ask_user_question(ctx, args),
         "skill" => skill::skill(ctx, args),
         "install_skill" => skill::install_skill(ctx, args),
+        "view_image" => vision::view_image(ctx, args),
         "mcp" => {
             // Meta-tool: manage/look up connected MCP servers.
             let sub = arg(args, "action").unwrap_or("list");
@@ -448,6 +450,20 @@ pub fn schemas() -> Vec<Value> {
                         "name": {"type": "string"}
                     },
                     "required": ["source"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "view_image",
+                "description": "Read an image file in the workspace and attach it to the conversation so a vision-capable model can see and describe it. Use for screenshots, diagrams, and photos the user references. Sensitive.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to the image file (png, jpg, gif, or webp, under 15 MB)"}
+                    },
+                    "required": ["path"]
                 }
             }
         }),

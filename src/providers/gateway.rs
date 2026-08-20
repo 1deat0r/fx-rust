@@ -45,6 +45,14 @@ fn serialize_messages(messages: &[Message]) -> Vec<Value> {
                             }
                             parts.push(json!({"type": "tool_result", "tool_call_id": id, "content": content}));
                         }
+                        super::ContentBlock::Image { media_type, data } => {
+                            if !text.is_empty() {
+                                parts.push(json!({"type": "text", "text": text}));
+                                text.clear();
+                            }
+                            let url = format!("data:{media_type};base64,{data}");
+                            parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                        }
                         _ => {}
                     }
                 }

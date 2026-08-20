@@ -336,6 +336,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "base64",
  "chrono",
  "dirs",
  "futures-util",

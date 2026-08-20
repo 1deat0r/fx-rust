@@ -340,7 +340,22 @@ pub async fn run(
             };
             let result_text = result.unwrap_or_else(tools::err_result);
             human.tool_result(&call.name, &result_text.to_string());
-            transcript.push(Message::tool(call.id.clone(), result_text.to_string()));
+            if call.name == "view_image" {
+                let args: serde_json::Value =
+                    serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+                if let Some((media, data)) = crate::tools::vision::attachment_for(&args) {
+                    transcript.push(Message::tool_with_image(
+                        call.id.clone(),
+                        result_text.to_string(),
+                        media,
+                        data,
+                    ));
+                } else {
+                    transcript.push(Message::tool(call.id.clone(), result_text.to_string()));
+                }
+            } else {
+                transcript.push(Message::tool(call.id.clone(), result_text.to_string()));
+            }
         }
 
         // Persist session (grants + transcript) after each model round.

@@ -41,6 +41,8 @@ pub enum ContentBlock {
     Text(String),
     ToolUse { id: String, name: String, input: Value },
     ToolResult { id: String, content: String },
+    /// Base64-encoded image attached to a user turn (vision).
+    Image { media_type: String, data: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -101,6 +103,17 @@ impl Message {
                 .into_iter()
                 .map(|(id, content)| ContentBlock::ToolResult { id, content })
                 .collect(),
+        }
+    }
+
+    /// Tool result with an image attached (vision tools like view_image).
+    pub fn tool_with_image(id: String, content: String, media_type: String, data: String) -> Self {
+        Self {
+            role: "user".into(),
+            content: vec![
+                ContentBlock::ToolResult { id, content },
+                ContentBlock::Image { media_type, data },
+            ],
         }
     }
     pub fn plain_text(&self) -> Option<&str> {
@@ -320,6 +333,7 @@ mod tests {
             sandbox: crate::config::SandboxMode::None,
             permission_rules: Default::default(),
             settings_path: None,
+            mcp_servers: Vec::new(),
         };
         let p = resolve_provider(&cfg).unwrap();
         assert_eq!(p.provider, ProviderKind::OpenAi);
