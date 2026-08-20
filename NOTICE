@@ -1,0 +1,7 @@
+fxrs is an independent Rust port of the fx coding agent
+(https://github.com/vercel-labs/fx, Apache-2.0, Copyright Vercel Labs).
+
+The port is informed by fx's public documentation and repository behavior:
+configuration layering, permission modes/rules, the tool set, and session
+semantics. It is not a translation of the Zig sources. No fx source code is
+included in this repository.
