@@ -100,6 +100,25 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             }
             Ok(0)
         }
+        Some("mcp") => {
+            let cfg = config::resolve(&cwd())?;
+            if cfg.mcp_servers.is_empty() {
+                println!("no MCP servers configured");
+                println!("add an 'mcpServers' array to ~/.fx/settings.json or .fx.json");
+println!("  settings.json: mcpServers: [{{ name, command, args, env (keys are optional) }}]");
+println!("example: npx -y @modelcontextprotocol/server-fetch");
+
+            } else {
+                for srv in &cfg.mcp_servers {
+                    let tools = crate::mcp::list_tools(srv);
+                    println!("{} ({} tools):", srv.name, tools.len());
+                    for t in &tools {
+                        println!("  {} -- {}", t.name, t.description.lines().next().unwrap_or(""));
+                    }
+                }
+            }
+            Ok(0)
+        }
         Some("hooks") => {
             let cfg = config::resolve(&cwd())?;
             use crate::hooks::{HookKind, discover};
@@ -154,10 +173,7 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             println!("fxrs {}", crate::version::VERSION);
             Ok(0)
         }
-        Some("upgrade") => {
-            println!("fxrs: `upgrade` is a no-op for this build; update via your package manager.");
-            Ok(0)
-        }
+
         Some(other) => {
             eprintln!("fxrs: unknown command `{other}`");
             show_cli_help();

@@ -121,6 +121,9 @@ pub async fn run(
 
     let max_steps = config.max_agent_steps;
 
+    // Publish connected MCP server tools to the model (once per agent run).
+    let mcp_tools = crate::mcp::list_all_tools(&config.mcp_servers);
+
     loop {
         if max_steps > 0 && steps >= max_steps {
             finish = FinishReason::MaxSteps;
@@ -131,8 +134,10 @@ pub async fn run(
 
         let tools_schema = if steps == 1 && config.first_call_tool_choice == FirstCallToolChoice::None {
             None
-        } else {
+        } else if mcp_tools.is_empty() {
             Some(tools::schemas())
+        } else {
+            Some(tools::schemas_with_mcp(&mcp_tools))
         };
         let mut stream = providers::stream(
             &provider,

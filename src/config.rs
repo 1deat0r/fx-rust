@@ -30,6 +30,8 @@ pub struct SettingsFile {
     pub sandbox: Option<String>,
     pub permission: Option<BTreeMap<String, serde_json::Value>>,
     pub workspaces: Option<BTreeMap<String, WorkspaceFile>>,
+    #[serde(default, rename = "mcpServers", alias = "mcp_servers")]
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -38,12 +40,33 @@ pub struct WorkspaceFile {
     pub sandbox: Option<String>,
     pub permission: Option<BTreeMap<String, serde_json::Value>>,
     pub additional_directories: Option<Vec<String>>,
+    #[serde(default, rename = "mcpServers", alias = "mcp_servers")]
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+/// MCP server definition, matching upstream fx's McpServerConfig shape.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub transport: Option<String>,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub required: Option<bool>,
 }
 
 /// Repository-safe project config (`.fx.json`). Only public fields are accepted.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct ProjectConfig {
+    #[serde(default, rename = "mcpServers", alias = "mcp_servers")]
+    pub mcp_servers: Vec<McpServerConfig>,
     pub max_agent_steps: Option<usize>,
     pub max_tool_result_bytes: Option<usize>,
     pub context: Option<bool>,
@@ -78,6 +101,8 @@ pub struct Config {
     pub permission_rules: BTreeMap<String, ToolRule>,
     /// Storage the resolved settings file lives in (for /settings).
     pub settings_path: Option<PathBuf>,
+    /// Merged MCP servers (workspace layer wins by name).
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -220,7 +245,28 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         sandbox,
         permission_rules,
         settings_path: Some(settings_path()),
+        mcp_servers: merge_mcp_servers(
+            &merge_mcp_servers(&settings.mcp_servers, &ws_entry.mcp_servers),
+            &project.mcp_servers,
+        ),
     })
+}
+
+/// Merge MCP server definitions: workspace entries override same-named
+/// profile entries by name; order is stable (profile first, then workspace).
+pub fn merge_mcp_servers(
+    profile: &[McpServerConfig],
+    workspace: &[McpServerConfig],
+) -> Vec<McpServerConfig> {
+    let mut out: Vec<McpServerConfig> = profile.to_vec();
+    for ws in workspace {
+        if let Some(existing) = out.iter_mut().find(|m| m.name == ws.name) {
+            *existing = ws.clone();
+        } else {
+            out.push(ws.clone());
+        }
+    }
+    out
 }
 
 /// Load project instructions (AGENTS.md / CLAUDE.md etc.) if `context` is enabled.

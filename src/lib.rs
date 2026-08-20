@@ -14,6 +14,7 @@ pub mod agent;
 pub mod cli;
 pub mod config;
 pub mod hooks;
+pub mod mcp;
 mod permissions;
 pub mod providers;
 pub mod sessions;

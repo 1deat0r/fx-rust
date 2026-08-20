@@ -67,6 +67,7 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
             s("file_path").or_else(|| s("path")).or_else(|| s("folder_path"))
         }
         "glob_files" | "grep_files" | "list_files" => s("pattern").or_else(|| s("path")),
+        n if n.starts_with("mcp__") => Some(n.to_string()),
         _ => s("path").or_else(|| s("url")).or_else(|| s("query")),
     }
 }
@@ -98,6 +99,29 @@ pub async fn execute(
         "ask_user_question" => question::ask_user_question(ctx, args),
         "skill" => skill::skill(ctx, args),
         "install_skill" => skill::install_skill(ctx, args),
+        "mcp" => {
+            // Meta-tool: manage/look up connected MCP servers.
+            let sub = arg(args, "action").unwrap_or("list");
+            match sub {
+                "list" => {
+                    let servers = &ctx.config.mcp_servers;
+                    let tools = crate::mcp::list_all_tools(servers);
+                    Ok(serde_json::json!({
+                        "servers": servers.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+                        "tools": tools.iter().map(|t| format!("{} ({}): {}", crate::mcp::prefixed_name(&t.server, &t.name), t.server, t.description)).collect::<Vec<_>>(),
+                    }))
+                }
+                "call" => {
+                    let server = arg(args, "server").unwrap_or("").to_string();
+                    let tool = arg(args, "tool").unwrap_or("").to_string();
+                    let arguments = args.get("arguments").cloned().unwrap_or_else(|| serde_json::json!({}));
+                    let full = format!("mcp__{server}__{tool}");
+                    Ok(crate::mcp::execute_mcp(&full, &serde_json::json!({ "arguments": arguments }), &ctx.config.mcp_servers))
+                }
+                _ => Ok(err_json(format!("unknown mcp action: {sub}"))),
+            }
+        }
+        other if other.starts_with("mcp__") => Ok(crate::mcp::execute_mcp(other, args, &ctx.config.mcp_servers)),
         other => bail!("unknown tool: {other}"),
     }
 }
@@ -108,6 +132,25 @@ fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 
 fn arg_i64(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(|v| v.as_i64())
+}
+
+/// Tool schemas for the base toolkit plus any connected MCP servers.
+/// MCP tools are published as `mcp__<server>__<tool>` entries so the model
+/// can call them exactly like built-ins.
+pub fn schemas_with_mcp(mcp_tools: &[crate::mcp::McpTool]) -> Vec<Value> {
+    use serde_json::json;
+    let mut out = schemas();
+    for t in mcp_tools {
+        out.push(json!({
+            "type": "function",
+            "function": {
+                "name": crate::mcp::prefixed_name(&t.server, &t.name),
+                "description": format!("[MCP {}] {}", t.server, t.description),
+                "parameters": t.input_schema,
+            }
+        }));
+    }
+    out
 }
 
 pub fn err_json(msg: String) -> Value {
