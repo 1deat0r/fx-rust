@@ -28,18 +28,23 @@ code with a single keystroke or fully hands-free.
 - **Upgrade**: `fxrs upgrade --install` checks the latest GitHub release and
   re-installs from source (no-op in this dev build unless `--install`).
 
-## Deferred (per scope)
+## Pending (targeted — full 1:1 mandate)
 
-ACP, WASM/NAPI bindings, the full TUI render engine, GitHub `pr` / `issue`
-flows, the full MCP streamable-http / elicitation / auth stack (stdio JSON-RPC
-only), and upstream's 26-file subagent system (minimal single-tool subset).
+fxrs is a **1:1 full Rust re-write** of upstream fx: every subsystem, command,
+tool, protocol, screen, and binding ships upstream is being rebuilt in Rust
+with behavioral equivalence. Still pending: the full TUI render engine +
+input composer, ACP server, NAPI/WASM bindings + JS SDK, OAuth/auth stack,
+the full MCP streamable-http / elicitation / auth stack (stdio only today),
+the full subagent subsystem, background/terminal execution, usage reporting,
+GitHub `pr`/`issue` flows, `doctor`/`usage`/`replay`/`auth`/`gh` CLI commands.
+See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
 
-Faithful core port of the agent core + CLI surface. Not a 1:1 line-for-line
-port (upstream is ~685K LOC across 549 Zig files); deferred to roadmap:
-ACP, WASM/NAPI bindings, the full TUI render engine, and `pr`/`issue`
-GitHub flows.
+Working Rust port of the fx agent core + CLI surface (~5.8K LOC so far,
+upstream is ~688K LOC across 549 Zig files). **Project mandate: a 1:1 full
+Rust re-write** — see [ROADMAP.md](ROADMAP.md) for the complete upstream
+surface inventory, the parity matrix, and the phased plan to full parity.
 
 Implemented so far:
 
