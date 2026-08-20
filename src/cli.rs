@@ -81,6 +81,21 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             println!("sandbox: {:?}", cfg.sandbox);
             Ok(0)
         }
+        Some("hooks") => {
+            let cfg = config::resolve(&cwd())?;
+            use crate::hooks::{HookKind, discover};
+            for kind in [HookKind::PreToolUse, HookKind::Stop, HookKind::PostTurnEnd, HookKind::AttentionRequired] {
+                let found = discover(kind, &cfg.workspace);
+                println!("{}:", kind.event_name());
+                if found.is_empty() {
+                    println!("  (none)");
+                }
+                for f in found {
+                    println!("  {}", f.display());
+                }
+            }
+            Ok(0)
+        }
         Some("permissions") => {
             let cfg = config::resolve(&cwd())?;
             println!("permission mode: {:?}", cfg.permission_mode.to_string());
