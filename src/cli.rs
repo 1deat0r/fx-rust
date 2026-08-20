@@ -1,6 +1,6 @@
 //! CLI surface: `fxrs [command]` — mirrors fx's Unix-shell CLI.
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,10 +17,27 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
 
     match cmd.map(|s| s.as_str()) {
         None | Some("") | Some("repl") => {
-            let cfg = Arc::new(config::resolve(&cwd())?);
-            let store = SessionStore::new()?;
-            crate::ui::run_interactive(cfg, &store, None, false).await?;
-            Ok(0)
+            if std::io::stdin().is_terminal() {
+                let cfg = Arc::new(config::resolve(&cwd())?);
+                let store = SessionStore::new()?;
+                crate::ui::run_interactive(cfg, &store, None, false).await?;
+                Ok(0)
+            } else {
+                // Non-TTY stdin: treat piped input as a one-shot prompt,
+                // mirroring fx (echo "..." | fxrs). A bare pipe with no
+                // content gets a hint instead of a silent exit.
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                let prompt = buf.trim().to_string();
+                if prompt.is_empty() {
+                    eprintln!("fxrs: no interactive terminal and no piped prompt");
+                    eprintln!("       open a real terminal to start the shell, or use:");
+                    eprintln!("         fxrs ask '<prompt>'      one-shot prompt");
+                    eprintln!("         echo '<prompt>' | fxrs  piped one-shot");
+                    return Ok(0);
+                }
+                run_ask(&[prompt]).await
+            }
         }
         Some("ask") | Some("a") => {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
