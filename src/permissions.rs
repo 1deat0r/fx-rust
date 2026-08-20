@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use globset::{Glob, GlobSetBuilder};
+use globset::Glob;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -134,20 +134,36 @@ impl GrantStore {
     pub fn is_allowed(&self, tool: &str, target: &str) -> bool {
         self.grants
             .iter()
-            .any(|(t, pattern)| t == tool && glob_matches(pattern, target))
+            .any(|(t, pattern)| t == tool && glob_matches(pattern, target, None))
     }
 }
 
-fn glob_matches(pattern: &str, target: &str) -> bool {
-    // Treat the target as a path or command string; "*" sugar common in rules.
-    let pat = if pattern.ends_with('/') && target_starts_with_dir(pattern, target) {
-        return target_starts_with_dir(pattern, target);
-    } else {
-        pattern
-    };
-    match Glob::new(pat) {
+fn glob_matches(pattern: &str, target: &str, rel_target: Option<&str>) -> bool {
+    // Directory sugar: pattern "docs/" matches the tree under docs/.
+    if pattern.ends_with('/') && target_starts_with_dir(pattern, target) {
+        return true;
+    }
+    if pattern.ends_with('/') {
+        if let Some(rel) = rel_target {
+            if target_starts_with_dir(pattern, rel) {
+                return true;
+            }
+        }
+    }
+    let ok_abs = match Glob::new(pattern) {
         Ok(g) => g.compile_matcher().is_match(target),
         Err(_) => pattern == target,
+    };
+    if ok_abs {
+        return true;
+    }
+    if let Some(rel) = rel_target {
+        match Glob::new(pattern) {
+            Ok(g) => g.compile_matcher().is_match(rel),
+            Err(_) => pattern == rel,
+        }
+    } else {
+        false
     }
 }
 
@@ -175,18 +191,30 @@ impl Default for Permissions {
     }
 }
 
-fn matches_rule(rule: &ToolRule, target: &str) -> Option<Rule> {
-    match rule {
-        ToolRule::Whole(r) => Some(*r),
-        ToolRule::Patterns(patterns) => {
-            let mut matched: Option<Rule> = None;
-            for (pattern, r) in patterns {
-                if glob_matches(pattern, target) {
-                    matched = Some(*r);
-                }
-            }
-            matched
+struct Candidate {
+    spec: usize,
+    key_rank: u8,
+    rule: Rule,
+}
+
+fn consider(best: &mut Option<Candidate>, cand: Candidate) {
+    let replace = match best {
+        None => true,
+        Some(b) => {
+            (cand.spec, cand.key_rank, rule_priority(cand.rule))
+                > (b.spec, b.key_rank, rule_priority(b.rule))
         }
+    };
+    if replace {
+        *best = Some(cand);
+    }
+}
+
+fn rule_priority(r: Rule) -> u8 {
+    match r {
+        Rule::Deny => 2,
+        Rule::Ask => 1,
+        Rule::Allow => 0,
     }
 }
 
@@ -201,61 +229,64 @@ impl Permissions {
 
     /// Decides whether a tool call may execute.
     pub fn decide(&self, req: &PermissionRequest) -> Decision {
+        let kind = tool_kind(req.tool_name);
         if self.mode == PermissionMode::Yolo {
             return Decision::Allow;
         }
-        let kind = tool_kind(req.tool_name);
-        let target = req.target;
-
-        // 1. Session grants: explicit human confirmations first.
-        if self.grants.is_allowed(&kind.to_string(), target) {
-            return Decision::Allow;
-        }
-        // Also match the raw tool name via grants (for bash exact commands).
-        if self.grants.is_allowed(req.tool_name, target) {
+        let sensitive = needs_approval(req.tool_name);
+        if !sensitive && self.rules.get("*").is_none() && self.rules.get(kind).is_none() && self.rules.get(req.tool_name).is_none() {
             return Decision::Allow;
         }
 
-        // 2. Static rules (deny wins over allow on overlap).
-        let mut matched_deny = false;
-        let mut matched_allow = false;
-        if let Some(rule) = self.rules.get("*") {
-            match matches_rule(rule, target) {
-                Some(Rule::Allow) => matched_allow = true,
-                Some(Rule::Deny) => matched_deny = true,
-                _ => {}
-            }
-        }
-        for key in [kind, req.tool_name] {
+        let rel_target = req.target
+            .strip_prefix(&req.workspace.to_string_lossy().to_string())
+            .map(|r| r.trim_start_matches('/'))
+            .filter(|r| !r.is_empty());
+
+        // Best candidate: patterns with higher specificity win; on equal
+        // specificity, the more specific rule key wins (tool name > kind > "*");
+        // ties on both resolve to deny first, then ask, then allow.
+        let mut best: Option<Candidate> = None;
+        for (key, key_rank) in [("*", 0u8), (kind, 1u8), (req.tool_name, 2u8)] {
             if let Some(rule) = self.rules.get(key) {
-                match matches_rule(rule, target) {
-                    Some(Rule::Allow) => matched_allow = true,
-                    Some(Rule::Deny) => matched_deny = true,
-                    _ => {}
+                match rule {
+                    ToolRule::Whole(r) => {
+                        consider(&mut best, Candidate { spec: 0, key_rank, rule: *r });
+                    }
+                    ToolRule::Patterns(patterns) => {
+                        for (pattern, r) in patterns {
+                            if glob_matches(pattern, req.target, rel_target) {
+                                consider(&mut best, Candidate {
+                                    spec: pattern.chars().count(),
+                                    key_rank,
+                                    rule: *r,
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
-        if matched_deny {
-            return Decision::Deny(DENY_TOOL);
-        }
-        if matched_allow {
+
+        // Session grants resolve unresolved calls ("don't ask again").
+        let granted = self.grants.is_allowed(req.tool_name, req.target)
+            || self.grants.is_allowed(kind, req.target);
+        if let Some(c) = &best {
+            if matches!(c.rule, Rule::Ask) && granted {
+                return Decision::Allow;
+            }
+        } else if granted {
             return Decision::Allow;
         }
 
-        // 3. Non-sensitive tools: always allowed.
-        if !needs_approval(req.tool_name) {
-            return Decision::Allow;
-        }
-
-        // 4. Unresolved sensitive call -> mode decides.
-        match self.mode {
-            PermissionMode::Yolo => Decision::Allow,
-            PermissionMode::Ask | PermissionMode::Auto => Decision::Unresolved,
+        match best {
+            Some(Candidate { rule: Rule::Allow, .. }) => Decision::Allow,
+            Some(Candidate { rule: Rule::Deny, .. }) => Decision::Deny(DENY_TOOL),
+            Some(Candidate { rule: Rule::Ask, .. }) | None if sensitive => Decision::Unresolved,
+            Some(Candidate { rule: Rule::Ask, .. }) | None => Decision::Allow,
         }
     }
 
-    /// Present a human prompt for an unresolved call. Returns whether to run.
-    /// `interactive` is false for non-TTY contexts where we must not wait.
     pub fn human_decide(
         &mut self,
         req: &PermissionRequest,
@@ -300,7 +331,7 @@ impl Permissions {
 mod tests {
     use super::*;
 
-    fn req(tool: &str, target: &str, ws: &str) -> PermissionRequest<'_> {
+    fn req<'a>(tool: &'a str, target: &'a str, ws: &'a str) -> PermissionRequest<'a> {
         PermissionRequest {
             tool_name: tool,
             target,
