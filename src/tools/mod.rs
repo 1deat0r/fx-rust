@@ -496,10 +496,16 @@ pub fn schemas() -> Vec<Value> {
 
 /// Parse model-emitted text tool calls of the form:
 ///   <invoke name="tool_name"><parameter name="arg">value</parameter>...</invoke>
+///   <│DSML│invoke name="tool_name"><│DSML│parameter name="arg" string="true">value</│DSML│parameter></│DSML│invoke>
 /// Returns (name, arguments) pairs. Values are parsed as JSON when possible,
 /// otherwise treated as plain strings. Used as a fallback for models/endpoints
 /// that cannot emit structured tool_calls (many local/OpenAI-compatible models).
+///
+/// DeepSeek-style DSML markup is normalized away first so `<│DSML│invoke ...>`
+/// blocks parse identically to `<invoke ...>` blocks. Parameter/attribute
+/// shapes like `<parameter name="x" string="true">` are accepted unchanged.
 pub fn parse_text_tool_calls(text: &str) -> Vec<(String, Value)> {
+    let text = normalize_dsml(text);
     let b = text.as_bytes();
     let find_tag = |from: usize, tag: &str| -> Option<usize> {
         text[from..].find(tag).map(|r| from + r)
@@ -537,6 +543,282 @@ pub fn parse_text_tool_calls(text: &str) -> Vec<(String, Value)> {
     out
 }
 
+/// Strip DeepSeek DSML markers (`│DSML│` / `|DSML|`) from tool-call markup so
+/// `<│DSML│invoke name="t">...` is parsed like `<invoke name="t">...`.
+/// The marker is redundant wrapping: `<│DSML│invoke` -> `<invoke`,
+/// `</│DSML│parameter>` -> `</parameter>`.
+fn normalize_dsml(text: &str) -> String {
+    // │ is U+FF5C FULLWIDTH VERTICAL LINE; also accept ASCII `|DSML|` and
+    // any surrounding-marker variants some models emit.
+    let mut out = text.to_string();
+    for marker in [
+        "\u{ff5c}DSML\u{ff5c}",
+        "|DSML|",
+        "\u{ff5c}DSML|",
+        "|DSML\u{ff5c}",
+    ] {
+        out = out.replace(marker, "");
+    }
+    out
+}
+
+/// Streaming display mask for text-blob tool-call markup.
+///
+/// Models without native tool-calling stream their tool calls as ordinary text
+/// in one of these dialects, which must be hidden from the user's terminal and
+/// from the committed transcript (the raw text still goes to
+/// [`parse_text_tool_calls`] unchanged):
+///
+///   • DeepSeek DSML:  `<│DSML│invoke ...><│DSML│parameter ...>...</│DSML│invoke>`
+///   • fx/Claude style: `<tool_calls>...<invoke name="t"><parameter ...>...</invoke>...</tool_calls>`
+///
+/// Feed every streamed delta through [`ToolMarkupMask::filter`]. Markers may be
+/// split across deltas; the mask holds back any run that could be a partial
+/// marker until it resolves.
+pub struct ToolMarkupMask {
+    pending: String,
+    inside: bool,
+    /// Nesting depth of block elements (`invoke`/`call`/`tool_calls`).
+    /// `parameter`/`arg` opens and closes are depth-neutral; only the outer
+    /// block close drops the depth back to 0 and un-hides text.
+    depth: usize,
+}
+
+/// Open markers: (literal, element name). `parameter`/`arg` opens are
+/// depth-neutral; the rest start hidden blocks.
+const MARKUP_OPEN: [(&str, &str); 12] = [
+    ("<\u{ff5c}DSML\u{ff5c}invoke", "invoke"),
+    ("<|DSML|invoke", "invoke"),
+    ("<\u{ff5c}DSML\u{ff5c}call", "call"),
+    ("<|DSML|call", "call"),
+    // Some models wrap the block in a `tool_calls` element too.
+    ("<\u{ff5c}DSML\u{ff5c}tool_calls", "tool_calls"),
+    ("<|DSML|tool_calls", "tool_calls"),
+    ("<\u{ff5c}DSML\u{ff5c}tool_call", "tool_calls"),
+    ("<|DSML|tool_call", "tool_calls"),
+    ("<tool_calls", "tool_calls"),
+    ("<invoke", "invoke"),
+    // Depth-neutral (kept explicit so `parameter` opens are recognized if they
+    // ever appear at top level or for wrapper bookkeeping).
+    ("<\u{ff5c}DSML\u{ff5c}parameter", "parameter"),
+    ("<|DSML|parameter", "parameter"),
+];
+
+/// Close markers: (literal, element name). `parameter`/`arg` closes are
+/// depth-neutral; only block closes decrement depth.
+const MARKUP_CLOSE: [(&str, &str); 11] = [
+    ("</\u{ff5c}DSML\u{ff5c}invoke", "invoke"),
+    ("</|DSML|invoke", "invoke"),
+    ("</\u{ff5c}DSML\u{ff5c}call", "call"),
+    ("</|DSML|call", "call"),
+    ("</\u{ff5c}DSML\u{ff5c}tool_calls", "tool_calls"),
+    ("</|DSML|tool_calls", "tool_calls"),
+    ("</\u{ff5c}DSML\u{ff5c}tool_call", "tool_calls"),
+    ("</|DSML|tool_call", "tool_calls"),
+    ("</tool_calls", "tool_calls"),
+    ("</invoke", "invoke"),
+    ("</\u{ff5c}DSML\u{ff5c}parameter", "parameter"),
+];
+
+#[derive(Debug)]
+enum Mark {
+    Open { name: &'static str, len: usize },
+    Close { name: &'static str, len: usize },
+}
+
+/// Earliest marker occurrence in `s` among the given marker list.
+/// On offset ties (one marker is a prefix of another) the longer literal wins.
+fn find_markers(s: &str, markers: &'static [(&'static str, &'static str)]) -> Option<(usize, Mark)> {
+    let mut best: Option<(usize, usize, &'static str)> = None;
+    for (marker, name) in markers {
+        if let Some(i) = s.find(marker) {
+            let better = match best {
+                Some((bi, bl, _)) => i < bi || (i == bi && marker.len() > bl),
+                None => true,
+            };
+            if better {
+                best = Some((i, marker.len(), name));
+            }
+        }
+    }
+    best.map(|(i, l, n)| (i, Mark::Open { name: n, len: l }))
+}
+
+/// Close-marker form of [`find_markers`].
+fn find_close_markers(s: &str) -> Option<(usize, Mark)> {
+    let mut best: Option<(usize, usize, &'static str)> = None;
+    for (marker, name) in MARKUP_CLOSE {
+        if let Some(i) = s.find(marker) {
+            let better = match best {
+                Some((bi, bl, _)) => i < bi || (i == bi && marker.len() > bl),
+                None => true,
+            };
+            if better {
+                best = Some((i, marker.len(), name));
+            }
+        }
+    }
+    best.map(|(i, l, n)| (i, Mark::Close { name: n, len: l }))
+}
+
+impl Default for ToolMarkupMask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ToolMarkupMask {
+    pub fn new() -> Self {
+        ToolMarkupMask { pending: String::new(), inside: false, depth: 0 }
+    }
+
+    /// Feed one streamed text delta; returns the portion safe to display.
+    pub fn filter(&mut self, chunk: &str) -> String {
+        self.pending.push_str(chunk);
+        let mut out = String::new();
+        loop {
+            if self.inside {
+                match self.next_inside() {
+                    Some((idx, Mark::Open { name, len })) => {
+                        self.pending.drain(..idx + len);
+                        if name != "parameter" {
+                            self.depth += 1;
+                        }
+                    }
+                    Some((idx, Mark::Close { name, len })) => {
+                        let marker_end = idx + len;
+                        match self.pending[marker_end..].find('>') {
+                            Some(g) => {
+                                self.pending.drain(..marker_end + g + 1);
+                                if name != "parameter" {
+                                    self.depth = self.depth.saturating_sub(1);
+                                    if self.depth == 0 {
+                                        self.inside = false;
+                                        // Blocks usually end with a newline
+                                        // after the close tag; drop one so the
+                                        // following prose doesn't start on a
+                                        // blank line.
+                                        if self.pending.starts_with("\r\n") {
+                                            self.pending.drain(..2);
+                                        } else if self.pending.starts_with('\n') {
+                                            self.pending.drain(..1);
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                // '>' likely arrives in the next delta.
+                                return out;
+                            }
+                        }
+                    }
+                    None => {
+                        // Nothing to emit while inside; if the tail could be a
+                        // partial marker, hold it for the next delta.
+                        if ends_with_partial(&self.pending, &ALL_MARKERS) {
+                            return out;
+                        }
+                        self.pending.clear();
+                        return out;
+                    }
+                }
+            } else {
+                match find_markers(&self.pending, &MARKUP_OPEN) {
+                    Some((idx, Mark::Open { len, .. })) => {
+                        // Only treat as an entry when not part of a close tag
+                        // (`</invoke>` also contains `<invoke`).
+                        if idx > 0 && self.pending.as_bytes()[idx - 1] == b'/' {
+                            // A close tag in normal prose: flush one char and
+                            // keep scanning so the text eventually appears.
+                            let first = self.pending.remove(0);
+                            out.push(first);
+                            continue;
+                        }
+                        out.push_str(&self.pending[..idx]);
+                        self.pending.drain(..idx + len);
+                        self.inside = true;
+                        self.depth = 1;
+                    }
+                    _ => {
+                        if ends_with_partial(&self.pending, &ALL_MARKERS) {
+                            return out;
+                        }
+                        out.push_str(&self.pending);
+                        self.pending.clear();
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+
+    /// While inside a hidden region, find the next open or close marker
+    /// (closes win at earlier offsets; prefix ties prefer longer literals).
+    fn next_inside(&self) -> Option<(usize, Mark)> {
+        let o = find_markers(&self.pending, &MARKUP_OPEN);
+        let c = find_close_markers(&self.pending);
+        match (o, c) {
+            (Some((oi, om)), Some((ci, cm))) => {
+                let ol = marker_len(&om);
+                let cl = marker_len(&cm);
+                if ci < oi {
+                    Some((ci, cm))
+                } else if oi < ci {
+                    Some((oi, om))
+                } else if cl > ol {
+                    Some((ci, cm))
+                } else {
+                    Some((oi, om))
+                }
+            }
+            (Some(o), None) => Some(o),
+            (None, Some(c)) => Some(c),
+            (None, None) => None,
+        }
+    }
+
+    /// Finalize: flush any residual pending text (used at stream end).
+    pub fn finish(self) -> String {
+        if self.inside {
+            String::new()
+        } else {
+            self.pending
+        }
+    }
+}
+
+fn marker_len(m: &Mark) -> usize {
+    match m {
+        Mark::Open { len, .. } | Mark::Close { len, .. } => *len,
+    }
+}
+
+/// Concatenated marker list used for partial-hold detection inside a block.
+static ALL_MARKERS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let mut v: Vec<&'static str> = Vec::new();
+    for (m, _) in MARKUP_OPEN.iter() {
+        v.push(m);
+    }
+    for (m, _) in MARKUP_CLOSE.iter() {
+        v.push(m);
+    }
+    v
+});
+
+fn ends_with_partial(s: &str, needles: &[&str]) -> bool {
+    // True when the tail of `s` could be the *beginning* of one of `needles`.
+    // Only the text from the last '<' can begin a marker — plain prose before
+    // it must not prevent the hold (byte offsets, UTF-8 safe via rfind on char
+    // boundary: '<' is ASCII so any position works).
+    match s.rfind('<') {
+        Some(i) => {
+            let tail = &s[i..];
+            !tail.is_empty() && needles.iter().any(|n| n.starts_with(tail))
+        }
+        None => false,
+    }
+}
+
 fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -572,5 +854,154 @@ Done."#;
     #[test]
     fn no_invoke_means_empty() {
         assert!(parse_text_tool_calls("hello there").is_empty());
+    }
+
+    // ---- DeepSeek DSML dialect (real output from bitdeer/deepseek-v4-flash) ----
+
+    #[test]
+    fn parses_dsml_invoke_blocks() {
+        let t = "I'll look that up.\n\n<\u{ff5c}DSML\u{ff5c}invoke name=\"web_search\">\n<\u{ff5c}DSML\u{ff5c}parameter name=\"query\" string=\"true\">trending AI news today</\u{ff5c}DSML\u{ff5c}parameter>\n<\u{ff5c}DSML\u{ff5c}parameter name=\"num_results\" string=\"false\">10</\u{ff5c}DSML\u{ff5c}parameter>\n</\u{ff5c}DSML\u{ff5c}invoke>";
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "web_search");
+        assert_eq!(calls[0].1["query"], "trending AI news today");
+        assert_eq!(calls[0].1["num_results"], 10);
+    }
+
+    #[test]
+    fn parses_dsml_with_ascii_pipe() {
+        let t = "<|DSML|invoke name=\"bash\"><|DSML|parameter name=\"cmd\" string=\"true\">echo hi</|DSML|parameter></|DSML|invoke>";
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "bash");
+        assert_eq!(calls[0].1["cmd"], "echo hi");
+    }
+
+    #[test]
+    fn parses_tool_calls_wrapper_with_dsml() {
+        // Model sometimes wraps the whole blob in a <tool_calls> element.
+        let t = "<tool_calls>\n<\u{ff5c}DSML\u{ff5c}invoke name=\"web_search\">\n<\u{ff5c}DSML\u{ff5c}parameter name=\"query\" string=\"true\">news</\u{ff5c}DSML\u{ff5c}parameter>\n</\u{ff5c}DSML\u{ff5c}invoke>\n</tool_calls>";
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "web_search");
+        assert_eq!(calls[0].1["query"], "news");
+    }
+
+    #[test]
+    fn truncated_dsml_still_yields_first_call() {
+        // The live stream got cut mid-parameter on a second invoke; the first
+        // complete block must still parse and execute.
+        let t = "<\u{ff5c}DSML\u{ff5c}invoke name=\"web_search\">\n<\u{ff5c}DSML\u{ff5c}parameter name=\"query\" string=\"true\">today</\u{ff5c}DSML\u{ff5c}parameter>\n</\u{ff5c}DSML\u{ff5c}invoke>\n<\u{ff5c}DSML\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}DSML\u{ff5c}parameter name=\"tty\" string";
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "web_search");
+    }
+
+    // ---- DsmlMask streaming display mask ----
+
+    #[test]
+    fn markup_mask_hides_dsml_keeps_prose() {
+        let mut m = ToolMarkupMask::new();
+        let shown: String = [
+            "I'll look that up.\n\n",
+            "<\u{ff5c}DSML\u{ff5c}invoke ",
+            "name=\"web_search\">\n<\u{ff5c}DSML\u{ff5c}param",
+            "eter name=\"query\" string=\"true\">news<",
+            "/\u{ff5c}DSML\u{ff5c}parameter>\n</\u{ff5c}DSML\u{ff5c}invoke>\n",
+            "Done. ",
+        ]
+        .iter()
+        .map(|d| m.filter(d))
+        .collect();
+        let tail = m.finish();
+        let shown = format!("{shown}{tail}");
+        assert_eq!(shown, "I'll look that up.\n\nDone. ");
+    }
+
+    #[test]
+    fn markup_mask_split_marker_across_deltas() {
+        let mut m = ToolMarkupMask::new();
+        let mut shown = String::new();
+        for d in [
+            "a<\u{ff5c}DSM",
+            "L\u{ff5c}invoke name=\"x\">",
+            "v</\u{ff5c}DSM",
+            "L\u{ff5c}invoke>b",
+        ] {
+            shown.push_str(&m.filter(d));
+        }
+        shown.push_str(&m.finish());
+        assert_eq!(shown, "ab");
+    }
+
+    // ---- plain fx/Claude text-blob dialect (<tool_calls>/<invoke>) ----
+
+    #[test]
+    fn markup_mask_hides_plain_invoke_block() {
+        let mut m = ToolMarkupMask::new();
+        let mut shown = String::new();
+        for d in [
+            "Let me check.\n\n",
+            "<tool_calls>\n",
+            "<invoke name=\"web_search\">\n",
+            "<parameter name=\"query\">trending AI news today</parameter>\n",
+            "</invoke>\n",
+            "</tool_calls>\n",
+            "Done.",
+        ] {
+            shown.push_str(&m.filter(d));
+        }
+        shown.push_str(&m.finish());
+        assert_eq!(shown, "Let me check.\n\nDone.");
+    }
+
+    #[test]
+    fn markup_mask_hides_invoke_without_wrapper() {
+        let mut m = ToolMarkupMask::new();
+        let shown: String = [
+            "a<invoke name=\"x\"><parameter name=\"p\">1</parameter></invoke>b",
+        ]
+        .iter()
+        .map(|d| m.filter(d))
+        .collect();
+        let shown = format!("{shown}{}", m.finish());
+        assert_eq!(shown, "ab");
+    }
+
+    #[test]
+    fn markup_mask_ignores_stray_close_in_prose() {
+        // A lone `</invoke>` with no opening block is prose, not markup.
+        let mut m = ToolMarkupMask::new();
+        let shown = format!("{}{}", m.filter("look at </invoke> here"), m.finish());
+        assert_eq!(shown, "look at </invoke> here");
+    }
+
+    #[test]
+    fn markup_mask_hides_dsml_tool_calls_wrapper() {
+        // Real live output: model wraps the block in `<│DSML│tool_calls>`.
+        let mut m = ToolMarkupMask::new();
+        let shown: String = [
+            "I'll search for trending AI news by fetching from a few live sources.\n\n",
+            "<\u{ff5c}DSML\u{ff5c}tool_calls>\n",
+            "<invoke name=\"web_search\"><parameter name=\"query\">trending AI news today</parameter></invoke>\n",
+            "</\u{ff5c}DSML\u{ff5c}tool_calls>",
+        ]
+        .iter()
+        .map(|d| m.filter(d))
+        .collect();
+        let shown = format!("{shown}{}", m.finish());
+        assert_eq!(shown, "I'll search for trending AI news by fetching from a few live sources.\n\n");
+    }
+
+    #[test]
+    fn markup_mask_hides_empty_dsml_tool_calls_wrapper() {
+        // Truncated/empty wrapper: nothing between the open and close tags.
+        let mut m = ToolMarkupMask::new();
+        let shown: String = ["a", "<\u{ff5c}DSML\u{ff5c}tool_calls>\n", "</\u{ff5c}DSML\u{ff5c}tool_calls>", "b"]
+            .iter()
+            .map(|d| m.filter(d))
+            .collect();
+        let shown = format!("{shown}{}", m.finish());
+        assert_eq!(shown, "ab");
     }
 }

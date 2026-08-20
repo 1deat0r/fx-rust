@@ -150,14 +150,31 @@ pub async fn run(
 
         // Accumulate assistant response.
         let mut text = String::new();
+        let mut display_text = String::new();
         let mut calls: BTreeMap<usize, ToolUse> = BTreeMap::new();
         let mut order: Vec<usize> = Vec::new();
+        // DSML markup (DeepSeek text-blob tool calls) is hidden from the
+        // terminal and from the committed transcript, but kept raw in `text`
+        // for parse_text_tool_calls.
+        let mut markup_mask = tools::ToolMarkupMask::new();
+        let mut reasoning_started = false;
         use futures_util::StreamExt;
         while let Some(ev) = stream.next().await {
             match ev {
                 Ok(StreamEvent::TextDelta(s)) => {
                     text.push_str(&s);
-                    human.text_delta(&s);
+                    let shown = markup_mask.filter(&s);
+                    display_text.push_str(&shown);
+                    if !shown.is_empty() {
+                        human.text_delta(&shown);
+                    }
+                }
+                Ok(StreamEvent::ReasoningDelta(s)) => {
+                    if !reasoning_started {
+                        human.reasoning_started();
+                        reasoning_started = true;
+                    }
+                    human.reasoning_delta(&s);
                 }
                 Ok(StreamEvent::ToolCallStart { index, id, name }) => {
                     if !calls.contains_key(&index) {
@@ -191,6 +208,11 @@ pub async fn run(
                     break;
                 }
             }
+        }
+        let residue = markup_mask.finish();
+        if !residue.is_empty() {
+            display_text.push_str(&residue);
+            human.text_delta(&residue);
         }
         human.stream_done();
         if error.is_some() {
@@ -226,10 +248,12 @@ pub async fn run(
             break;
         }
 
-        // Commit assistant turn to transcript.
+        // Commit assistant turn to transcript. The *visible* text is stored
+        // (DSML markup was masked out); the raw `text` was only needed for
+        // parse_text_tool_calls above.
         let mut assistant_blocks = Vec::new();
-        if !text.trim().is_empty() {
-            assistant_blocks.push(ContentBlock::Text(text.clone()));
+        if !display_text.trim().is_empty() {
+            assistant_blocks.push(ContentBlock::Text(display_text.clone()));
         }
         for idx in &order {
             if let Some(c) = calls.get(idx) {
@@ -250,10 +274,11 @@ pub async fn run(
         if call_ids.is_empty() {
             finish = FinishReason::Stop;
             // Lifecycle hooks at stop / end of turn.
+            let visible_text = if display_text.trim().is_empty() { text.clone() } else { display_text.clone() };
             let stop_input = json!({
                 "session_id": session_id,
                 "workspace": config.workspace.display().to_string(),
-                "assistant_text": text,
+                "assistant_text": visible_text,
             });
             crate::hooks::run(crate::hooks::HookKind::Stop, stop_input, &config.workspace, 30);
             crate::hooks::run(crate::hooks::HookKind::PostTurnEnd, json!({

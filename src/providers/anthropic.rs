@@ -78,7 +78,11 @@ pub fn stream(
                 return;
             }
         };
-        let client = reqwest::Client::builder().build().context("building http client")?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .context("building http client")?;
         let resp = match client
             .post(&url)
             .bearer_auth(&key)
@@ -142,6 +146,13 @@ pub fn stream(
                         "text_delta" => {
                             if let Some(t) = delta.get("text").and_then(|v| v.as_str()) {
                                 yield Ok(StreamEvent::TextDelta(t.to_string()));
+                            }
+                        }
+                        "thinking_delta" => {
+                            if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                if !t.is_empty() {
+                                    yield Ok(StreamEvent::ReasoningDelta(t.to_string()));
+                                }
                             }
                         }
                         "input_json_delta" => {

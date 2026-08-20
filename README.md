@@ -56,6 +56,11 @@ Implemented so far:
   delete/rename/copy/folder/search), memory, question, skills, and web
   (search + fetch). Permission-agnostic tools; gating lives in the agent.
   Failures return structured JSON errors, never abort the agent.
+Models without native tool-calling (many local/OpenAI-compatible endpoints,
+e.g. DeepSeek streaming DSML markup) emit their tool calls as plain text.
+fxrs parses three text dialects — Claude-style `<invoke name="...">`, DeepSeek
+DSML (`<│DSML│invoke ...>`), and wrapped `<tool_calls>...<invoke ...>` blocks —
+and hides that markup from the terminal and the saved transcript.
 - **Agent loop** (`src/agent.rs`) — streaming text + tool calls, step
   accounting, `max_agent_steps` (0 = unlimited), `first_call_tool_choice`
   support, auto-review fallback for unresolved calls in non-interactive

@@ -17,6 +17,8 @@ use crate::sessions::SessionStore;
 pub trait Human: Send + Sync {
     fn step_started(&self, _step: usize) {}
     fn text_delta(&self, _text: &str) {}
+    fn reasoning_started(&self) {}
+    fn reasoning_delta(&self, _text: &str) {}
     fn stream_done(&self) {}
     fn trace_tool(&self, _name: String) {}
     fn tool_result(&self, _name: &str, _result: &str) {}
@@ -66,6 +68,25 @@ impl Human for InteractiveHuman {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(text.as_bytes());
         let _ = out.flush();
+    }
+
+    fn reasoning_started(&self) {
+        if self.quiet {
+            return;
+        }
+        // One faint line so a long thinking phase never reads as a hang.
+        let _ = writeln!(std::io::stderr().lock(), "\x1b[2mƒ thinking…\x1b[0m");
+    }
+
+    fn reasoning_delta(&self, text: &str) {
+        if self.quiet || !self.trace {
+            return;
+        }
+        let mut e = std::io::stderr().lock();
+        let _ = e.write_all(b"\x1b[2m");
+        let _ = e.write_all(text.as_bytes());
+        let _ = e.write_all(b"\x1b[0m");
+        let _ = e.flush();
     }
 
     fn stream_done(&self) {

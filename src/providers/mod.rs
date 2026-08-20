@@ -143,6 +143,9 @@ pub struct ToolUse {
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     TextDelta(String),
+    /// Model chain-of-thought / reasoning text. Displayed as a subtle
+    /// indicator (or traced to stderr); never counted as answer text.
+    ReasoningDelta(String),
     ToolCallStart { index: usize, id: String, name: String },
     ToolCallArgDelta { index: usize, delta: String },
     ToolCallDone { index: usize, id: String, name: String, input: Value },
@@ -278,6 +281,7 @@ pub async fn chat(
     while let Some(ev) = events.next().await {
         match ev? {
             StreamEvent::TextDelta(t) => text.push_str(&t),
+            StreamEvent::ReasoningDelta(_) => {} // reasoning never enters chat() output
             StreamEvent::ToolCallStart { index, id, name, .. } => {
                 pending.push((index, id, name, String::new()));
             }

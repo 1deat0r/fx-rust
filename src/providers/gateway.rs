@@ -139,6 +139,10 @@ pub fn stream(
 
     Box::pin(async_stream::stream! {
         let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            // Bound the whole request so a gateway that stops sending events
+            // mid-stream cannot hang the agent forever.
+            .timeout(std::time::Duration::from_secs(300))
             .build()
             .context("building http client")?;
 
@@ -195,6 +199,13 @@ pub fn stream(
                         if let Some(d) = chunk.get("delta").and_then(|v| v.as_str()) {
                             if !d.is_empty() {
                                 yield Ok(StreamEvent::TextDelta(d.to_string()));
+                            }
+                        }
+                    }
+                    "reasoning-delta" => {
+                        if let Some(d) = chunk.get("delta").and_then(|v| v.as_str()) {
+                            if !d.is_empty() {
+                                yield Ok(StreamEvent::ReasoningDelta(d.to_string()));
                             }
                         }
                     }
