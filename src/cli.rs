@@ -81,6 +81,25 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             println!("sandbox: {:?}", cfg.sandbox);
             Ok(0)
         }
+        Some("upgrade") => {
+            let current = crate::upgrade::version_tag();
+            println!("current version: {current}");
+            match crate::upgrade::latest_release() {
+                Ok(Some(latest)) if latest.trim_start_matches('v') != crate::version::VERSION => {
+                    println!("latest release:  {latest}");
+                    println!("run `fxrs upgrade --install` to rebuild from source and install in PATH");
+                }
+                Ok(Some(latest)) => println!("already up to date ({latest})"),
+                Ok(None) => println!("no releases found yet on GitHub; nothing to upgrade"),
+                Err(e) => println!("could not check for updates: {e:#}"),
+            }
+            let wants_install = args.clone().any(|a| a.as_str() == "--install");
+            if wants_install {
+                crate::upgrade::install_from_git()?;
+                println!("fxrs upgraded");
+            }
+            Ok(0)
+        }
         Some("hooks") => {
             let cfg = config::resolve(&cwd())?;
             use crate::hooks::{HookKind, discover};

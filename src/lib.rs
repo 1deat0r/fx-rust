@@ -18,6 +18,7 @@ mod permissions;
 pub mod providers;
 pub mod sessions;
 pub mod tools;
+mod upgrade;
 pub mod ui;
 pub mod util;
 pub mod version;
