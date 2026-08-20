@@ -1,6 +1,6 @@
 //! Anthropic Messages API client with streaming.
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 

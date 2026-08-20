@@ -36,20 +36,49 @@ impl ProviderKind {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ContentBlock {
     Text(String),
     ToolUse { id: String, name: String, input: Value },
     ToolResult { id: String, content: String },
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: Vec<ContentBlock>,
 }
 
 impl Message {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self::user_text(text)
+    }
+    pub fn tool(id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::tool_results(vec![(id.into(), content.into())])
+    }
+    pub fn role_str(&self) -> &str {
+        &self.role
+    }
+    pub fn last_text(&self) -> Option<String> {
+        if let Some(ContentBlock::Text(t)) = self.content.last() {
+            Some(t.clone())
+        } else {
+            None
+        }
+    }
+    pub fn tool_uses(&self) -> Vec<ToolUse> {
+        self.content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { id, name, input } => Some(ToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: serde_json::to_string(input).unwrap_or_default(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
     pub fn user_text(text: impl Into<String>) -> Self {
         Self { role: "user".into(), content: vec![ContentBlock::Text(text.into())] }
     }
@@ -89,6 +118,13 @@ impl Message {
         }
         out
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolUse {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,8 +173,10 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
         };
         let (base_url, api_key) = match kind {
             ProviderKind::Gateway => (
-                std::env::var("AI_GATEWAY_BASE_URL").ok(),
-                std::env::var("AI_GATEWAY_API_KEY").ok(),
+                std::env::var("FX_GATEWAY_BASE_URL").ok()
+                    .or_else(|| std::env::var("AI_GATEWAY_BASE_URL").ok()),
+                std::env::var("AI_GATEWAY_API_KEY").ok()
+                    .or_else(|| std::env::var("FX_GATEWAY_API_KEY").ok()),
             ),
             ProviderKind::Anthropic => (
                 std::env::var("ANTHROPIC_BASE_URL").ok(),
@@ -169,7 +207,8 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
         return Ok(ProviderConfig {
             provider: ProviderKind::Gateway,
             model,
-            base_url: std::env::var("AI_GATEWAY_BASE_URL").ok(),
+            base_url: std::env::var("FX_GATEWAY_BASE_URL").ok()
+                .or_else(|| std::env::var("AI_GATEWAY_BASE_URL").ok()),
             api_key: Some(key),
         });
     }
@@ -271,6 +310,7 @@ mod tests {
         std::env::set_var("FX_PROVIDER", "openai");
         std::env::set_var("AI_BASE_URL", "http://localhost:11434/v1");
         let cfg = Config {
+            workspace: std::path::PathBuf::from("/tmp/ws"),
             model: "qwen3-coder".into(),
             permission_mode: crate::permissions::PermissionMode::Auto,
             max_agent_steps: 0,

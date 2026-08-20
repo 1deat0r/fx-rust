@@ -28,7 +28,7 @@ pub fn ask_user_question(ctx: &ToolContext, args: &Value) -> Result<Value> {
         // Use stdout for the question so it lands in the transcript stream.
         writeln!(stdout, "\n\x1b[36mƒ {question}\x1b[0m")?;
         if !options.is_empty() {
-            for (i, opt) in options.iter().enumerate() {
+            for (_i, opt) in options.iter().enumerate() {
                 writeln!(stdout, "   \x1b[90m[{{i+1}}]\x1b[0m {opt}")?;
             }
             writeln!(stdout, "   \x1b[90m[number or free text]\x1b[0m")?;

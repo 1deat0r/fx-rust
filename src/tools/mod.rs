@@ -55,6 +55,22 @@ impl ToolContext {
     }
 }
 
+/// Describe the permission target for a tool call: filesystem tools use the
+/// resolved path, run_command uses the raw command string.
+pub fn target_for(name: &str, args_json: &str) -> Option<String> {
+    let args: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+    match name {
+        "run_command" => s("command"),
+        "read_file" | "write_file" | "edit_file" | "delete_file" | "rename_file"
+        | "copy_file" | "create_folder" | "open_file" | "file_info" => {
+            s("file_path").or_else(|| s("path")).or_else(|| s("folder_path"))
+        }
+        "glob_files" | "grep_files" | "list_files" => s("pattern").or_else(|| s("path")),
+        _ => s("path").or_else(|| s("url")).or_else(|| s("query")),
+    }
+}
+
 /// Execute one tool call. Returns the JSON result to hand back to the model.
 /// Errors are surfaced as a structured error object (not an abort).
 pub async fn execute(
@@ -94,7 +110,7 @@ fn arg_i64(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(|v| v.as_i64())
 }
 
-fn err_json(msg: String) -> Value {
+pub fn err_json(msg: String) -> Value {
     json!({ "error": msg })
 }
 
@@ -393,4 +409,85 @@ pub fn schemas() -> Vec<Value> {
             }
         }),
     ]
+}
+
+/// Parse model-emitted text tool calls of the form:
+///   <invoke name="tool_name"><parameter name="arg">value</parameter>...</invoke>
+/// Returns (name, arguments) pairs. Values are parsed as JSON when possible,
+/// otherwise treated as plain strings. Used as a fallback for models/endpoints
+/// that cannot emit structured tool_calls (many local/OpenAI-compatible models).
+pub fn parse_text_tool_calls(text: &str) -> Vec<(String, Value)> {
+    let b = text.as_bytes();
+    let find_tag = |from: usize, tag: &str| -> Option<usize> {
+        text[from..].find(tag).map(|r| from + r)
+    };
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while let Some(open) = find_tag(pos, "<invoke name=\"") {
+        let Some(name_end) = find_tag(open + "<invoke name=\"".len(), "\"") else { break };
+        let name = xml_unescape(&text[open + "<invoke name=\"".len()..name_end]);
+        let Some(body_open) = find_tag(name_end + 1, ">") else { break };
+        let Some(body_close) = find_tag(body_open + 1, "</invoke>") else { break };
+        let body = &text[body_open + 1..body_close];
+
+        let mut args = serde_json::Map::new();
+        let mut ppos = 0usize;
+        while let Some(popen) = body[ppos..].find("<parameter name=\"") {
+            let pabs = ppos + popen;
+            let pname_start = pabs + "<parameter name=\"".len();
+            let Some(pname_end) = body[pname_start..].find('"') else { break };
+            let key = xml_unescape(&body[pname_start..pname_start + pname_end]);
+            let Some(pgt) = body[pname_start + pname_end..].find('>') else { break };
+            let val_start = pname_start + pname_end + pgt + 1;
+            let Some(pclose) = body[val_start..].find("</parameter>") else { break };
+            let raw = xml_unescape(&body[val_start..val_start + pclose]);
+            let parsed = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::String(raw));
+            args.insert(key, parsed);
+            ppos = val_start + pclose + "</parameter>".len();
+        }
+        if !name.is_empty() {
+            out.push((name, Value::Object(args)));
+        }
+        pos = body_close + "</invoke>".len();
+        let _ = b;
+    }
+    out
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod text_tool_tests {
+    use super::*;
+
+    #[test]
+    fn parses_invoke_blocks() {
+        let t = r#"Sure! Let me look.
+<invoke name="list_files"><parameter name="path">/tmp</parameter></invoke>
+Done."#;
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "list_files");
+        assert_eq!(calls[0].1["path"], "/tmp");
+    }
+
+    #[test]
+    fn parses_json_escaped_values() {
+        let t = r#"<invoke name="grep_files"><parameter name="pattern">TODO</parameter><parameter name="path">/a/b</parameter></invoke>"#;
+        let calls = parse_text_tool_calls(t);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["pattern"], "TODO");
+        assert_eq!(calls[0].1["path"], "/a/b");
+    }
+
+    #[test]
+    fn no_invoke_means_empty() {
+        assert!(parse_text_tool_calls("hello there").is_empty());
+    }
 }

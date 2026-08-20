@@ -16,14 +16,25 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 use globset::Glob;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionMode {
     Ask,
     Auto,
     Yolo,
+}
+
+impl std::fmt::Display for PermissionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Ask => "ask",
+            Self::Auto => "auto",
+            Self::Yolo => "yolo",
+        };
+        f.write_str(s)
+    }
 }
 
 impl PermissionMode {
@@ -114,7 +125,6 @@ pub struct PermissionRequest<'a> {
 }
 
 static DENY_TOOL: &str = "denied by rule";
-static DENY_MISSING_GRANT: &str = "no session grant";
 
 #[derive(Debug, Default)]
 pub struct GrantStore {

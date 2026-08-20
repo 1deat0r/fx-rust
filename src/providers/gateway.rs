@@ -2,7 +2,7 @@
 //! Serves the `gateway` (AI Gateway) and `openai` (any compatible endpoint)
 //! provider kinds. Endpoint: {base_url}/chat/completions.
 
-use anyhow::{Context, Result, bail};
+use anyhow::Context;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -14,8 +14,18 @@ fn default_base() -> &'static str {
 }
 
 fn chat_url(p: &ProviderConfig) -> String {
+    if let Ok(u) = std::env::var("FX_GATEWAY_CHAT_URL") {
+        if !u.trim().is_empty() {
+            return u;
+        }
+    }
     let base = p.base_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| default_base().to_string());
-    format!("{}/chat/completions", base.trim_end_matches('/'))
+    let base = base.trim_end_matches('/').to_string();
+    if base.ends_with("/v1") {
+        format!("{base}/chat/completions")
+    } else {
+        format!("{base}/chat/completions")
+    }
 }
 
 fn serialize_messages(messages: &[Message]) -> Vec<Value> {
@@ -166,6 +176,54 @@ pub fn stream(
             if let Some(err) = chunk.get("error") {
                 yield Err(anyhow::anyhow!("provider error: {err}"));
                 return;
+            }
+            // AI-SDK-style typed events (local gateways, Vercel AI SDK proxies):
+            //   {"type":"text-delta","delta":...}
+            //   {"type":"reasoning-delta","delta":...}   (thinking; skipped)
+            //   {"type":"finish","finishReason":...,"usage":{...}}
+            if let Some(ty) = chunk.get("type").and_then(|v| v.as_str()) {
+                match ty {
+                    "text-delta" => {
+                        if let Some(d) = chunk.get("delta").and_then(|v| v.as_str()) {
+                            if !d.is_empty() {
+                                yield Ok(StreamEvent::TextDelta(d.to_string()));
+                            }
+                        }
+                    }
+                    "tool-call-start" | "tool-call-delta" | "tool-call-end" => {
+                        // AI SDK tool-call events: {"type":"tool-call-start","toolCallId","toolName","args":{...}}
+                        // Accumulate like OpenAI tool_calls.
+                        let idx = chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(calls.len() as u64) as usize;
+                        while calls.len() <= idx {
+                            calls.push((idx, None, None, String::new()));
+                        }
+                        let slot = &mut calls[idx];
+                        if let Some(id) = chunk.get("toolCallId").and_then(|v| v.as_str()) {
+                            slot.1 = Some(id.to_string());
+                        }
+                        if let Some(name) = chunk.get("toolName").and_then(|v| v.as_str()) {
+                            slot.2 = Some(name.to_string());
+                        }
+                        if let Some(args) = chunk.get("args") {
+                            let rendered = serde_json::to_string(args).unwrap_or_default();
+                            if !rendered.is_empty() {
+                                slot.3 = rendered;
+                            }
+                        }
+                    }
+                    "finish" => {
+                        if let Some(u) = chunk.get("usage") {
+                            let input = u.get("inputTokens").and_then(|v| v.as_u64())
+                                .or_else(|| u.get("prompt_tokens").and_then(|v| v.as_u64()));
+                            let output = u.get("outputTokens").and_then(|v| v.as_u64())
+                                .or_else(|| u.get("completion_tokens").and_then(|v| v.as_u64()));
+                            yield Ok(StreamEvent::Usage { input_tokens: input, output_tokens: output });
+                        }
+                        break;
+                    }
+                    _ => {} // reasoning-delta and anything else: skip
+                }
+                continue;
             }
             if let Some(usage) = chunk.get("usage") {
                 saw_usage = true;

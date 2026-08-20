@@ -172,7 +172,7 @@ fn guess_html(bytes: &[u8]) -> bool {
     head.contains("<html") || head.contains("<!doctype html") || head.contains("<head")
 }
 
-pub async fn web_search(ctx: &ToolContext, args: &Value) -> Result<Value> {
+pub async fn web_search(_ctx: &ToolContext, args: &Value) -> Result<Value> {
     let query = arg(args, "query").ok_or_else(|| anyhow::anyhow!("missing `query`"))?;
     let client = Client::builder()
         .timeout(FETCH_TIMEOUT)

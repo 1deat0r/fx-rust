@@ -65,6 +65,8 @@ pub enum FirstCallToolChoice {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Workspace the config was resolved for.
+    pub workspace: std::path::PathBuf,
     pub model: String,
     pub permission_mode: PermissionMode,
     pub max_agent_steps: usize,
@@ -208,6 +210,7 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
     }
 
     Ok(Config {
+        workspace: workspace.to_path_buf(),
         model,
         permission_mode,
         max_agent_steps,

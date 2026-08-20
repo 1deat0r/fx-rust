@@ -18,6 +18,7 @@ pub mod providers;
 pub mod sessions;
 pub mod tools;
 pub mod ui;
+pub mod util;
 pub mod version;
 
 pub use version::VERSION;
