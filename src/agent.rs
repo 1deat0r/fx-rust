@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde_json::{Value, json};
 
 use crate::config::{Config, FirstCallToolChoice};
 use crate::permissions::{Decision, PermissionMode, Permissions};
@@ -242,6 +243,18 @@ pub async fn run(
 
         if call_ids.is_empty() {
             finish = FinishReason::Stop;
+            // Lifecycle hooks at stop / end of turn.
+            let stop_input = json!({
+                "session_id": session_id,
+                "workspace": config.workspace.display().to_string(),
+                "assistant_text": text,
+            });
+            crate::hooks::run(crate::hooks::HookKind::Stop, stop_input, &config.workspace, 30);
+            crate::hooks::run(crate::hooks::HookKind::PostTurnEnd, json!({
+                "session_id": session_id,
+                "workspace": config.workspace.display().to_string(),
+                "steps": steps,
+            }), &config.workspace, 30);
             break;
         }
 
@@ -258,34 +271,68 @@ pub async fn run(
                 workspace: &config.workspace,
             });
 
-            let result = match decision {
-                Decision::Allow => execute_tool(&ctx, &call).await,
-                Decision::Deny(reason) => {
-                    Ok(tools::err_json(format!("{name}: blocked by permission rules: {reason}", name = call.name)))
+            // Lifecycle hooks: PreToolUse may block or rewrite.
+            let hook_args: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+            let mut rewritten_args: Option<Value> = None;
+            let mut hook_blocked: Option<String> = None;
+            for outcome in crate::hooks::run(
+                crate::hooks::HookKind::PreToolUse,
+                crate::hooks::pre_tool_use_input(&call.name, &hook_args, &config.workspace, Some(&session_id)),
+                &config.workspace,
+                30,
+            ) {
+                match outcome {
+                    crate::hooks::HookOutcome::Block { reason } => {
+                        hook_blocked = Some(reason);
+                        break;
+                    }
+                    crate::hooks::HookOutcome::Rewrite { args } => {
+                        rewritten_args = Some(args);
+                    }
+                    crate::hooks::HookOutcome::Allow => {}
                 }
-                Decision::Unresolved => match config.permission_mode {
-                    PermissionMode::Yolo => execute_tool(&ctx, &call).await,
-                    PermissionMode::Ask if req.interactive => {
-                        let allowed = human.approve(call.name.clone(), target.clone(), call.arguments.clone());
-                        if allowed {
-                            let pattern = grant_pattern(&target);
-                            grants_map.insert(call.name.clone(), pattern.clone());
-                            permissions.grants.allow(&call.name, &pattern);
-                            execute_tool(&ctx, &call).await
-                        } else {
-                            Ok(tools::err_json(format!("{}: denied by user", call.name)))
+            }
+            let result = if let Some(reason) = hook_blocked {
+                Ok(tools::err_json(format!("{}: blocked by PreToolUse hook: {reason}", call.name)))
+            } else {
+                let effective_arguments = rewritten_args
+                    .as_ref()
+                    .map(|a| serde_json::to_string(a).unwrap_or_default())
+                    .unwrap_or_else(|| call.arguments.clone());
+                let effective_call = if rewritten_args.is_some() {
+                    ToolUse { id: call.id.clone(), name: call.name.clone(), arguments: effective_arguments }
+                } else {
+                    call.clone()
+                };
+                let r = match decision {
+                    Decision::Allow => execute_tool(&ctx, &effective_call).await,
+                    Decision::Deny(reason) => {
+                        Ok(tools::err_json(format!("{name}: blocked by permission rules: {reason}", name = call.name)))
+                    }
+                    Decision::Unresolved => match config.permission_mode {
+                        PermissionMode::Yolo => execute_tool(&ctx, &effective_call).await,
+                        PermissionMode::Ask if req.interactive => {
+                            let allowed = human.approve(call.name.clone(), target.clone(), call.arguments.clone());
+                            if allowed {
+                                let pattern = grant_pattern(&target);
+                                grants_map.insert(call.name.clone(), pattern.clone());
+                                permissions.grants.allow(&call.name, &pattern);
+                                execute_tool(&ctx, &effective_call).await
+                            } else {
+                                Ok(tools::err_json(format!("{}: denied by user", call.name)))
+                            }
                         }
-                    }
-                    PermissionMode::Ask => Ok(tools::err_json(format!(
-                        "{}: blocked: permission needed but interactive approval unavailable",
-                        call.name
-                    ))),
-                    PermissionMode::Auto => {
-                        auto_review(&provider, &system, &transcript, &call, config.clone()).await
-                    }
-                },
+                        PermissionMode::Ask => Ok(tools::err_json(format!(
+                            "{}: blocked: permission needed but interactive approval unavailable",
+                            call.name
+                        ))),
+                        PermissionMode::Auto => {
+                            auto_review(&provider, &system, &transcript, &call, config.clone()).await
+                        }
+                    },
+                };
+                r
             };
-
             let result_text = result.unwrap_or_else(tools::err_result);
             human.tool_result(&call.name, &result_text.to_string());
             transcript.push(Message::tool(call.id.clone(), result_text.to_string()));

@@ -13,7 +13,8 @@
 pub mod agent;
 pub mod cli;
 pub mod config;
-pub mod permissions;
+pub mod hooks;
+mod permissions;
 pub mod providers;
 pub mod sessions;
 pub mod tools;
