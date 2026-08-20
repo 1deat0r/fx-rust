@@ -7,6 +7,33 @@ layered configuration system, workspace-scoped sessions you can resume, and a
 four-gate permission runtime (`ask` / `auto` / `yolo`) that lets the agent run
 code with a single keystroke or fully hands-free.
 
+## Implemented surface
+
+- **Toolkit (21 built-ins + MCP)**: bash/shell, filesystem (read, write, edit,
+  delete, rename, copy, mkdir, list, glob, grep, info), web_search / web_fetch,
+  memory, skills, install_skill, ask_user_question, run in-workspace,
+  **view_image** (vision: attaches base64 image blocks for vision-capable
+  models), **subagent** (nested agent runs, depth-capped at 3, own session).
+- **Lifecycle hooks**: `PreToolUse` (allow / block / rewrite), `Stop`,
+  `PostTurnEnd`, `AttentionRequired` — file-script shims at
+  `~/.fx/hooks/<Event>` and `<workspace>/.fx/hooks/<Event>` speaking
+  Claude-Code-style stdin-JSON / stdout `{"decision": ...}`; hook failures
+  never abort the agent. Inspect with `fxrs hooks`.
+- **MCP stdio clients**: `mcpServers` array in `~/.fx/settings.json`,
+  workspace settings, or repo `.fx.json` (`command` / `args` / `env` /
+  `transport: stdio`). Servers are discovered once per run and their tools
+  published as `mcp__<server>__<tool>`; call them like any built-in. A broken
+  server never wedges the agent (per-call process + 90s timeout). Inspect
+  with `fxrs mcp`.
+- **Upgrade**: `fxrs upgrade --install` checks the latest GitHub release and
+  re-installs from source (no-op in this dev build unless `--install`).
+
+## Deferred (per scope)
+
+ACP, WASM/NAPI bindings, the full TUI render engine, GitHub `pr` / `issue`
+flows, the full MCP streamable-http / elicitation / auth stack (stdio JSON-RPC
+only), and upstream's 26-file subagent system (minimal single-tool subset).
+
 ## Status
 
 Faithful core port of the agent core + CLI surface. Not a 1:1 line-for-line

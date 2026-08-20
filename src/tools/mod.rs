@@ -14,6 +14,7 @@ pub mod filesystem;
 pub mod memory;
 pub mod question;
 pub mod skill;
+pub mod subagent;
 pub mod vision;
 pub mod web;
 
@@ -34,6 +35,8 @@ pub struct ToolContext {
     /// ask_user_question and human permission fallbacks.
     pub interactive: bool,
     pub config: Arc<Config>,
+    /// Session store for nested agent runs (subagent tool).
+    pub store: crate::sessions::SessionStore,
 }
 
 impl ToolContext {
@@ -69,6 +72,7 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
         }
         "glob_files" | "grep_files" | "list_files" => s("pattern").or_else(|| s("path")),
         n if n.starts_with("mcp__") => Some(n.to_string()),
+        "subagent" => Some("subagent".to_string()),
         _ => s("path").or_else(|| s("url")).or_else(|| s("query")),
     }
 }
@@ -101,6 +105,11 @@ pub async fn execute(
         "skill" => skill::skill(ctx, args),
         "install_skill" => skill::install_skill(ctx, args),
         "view_image" => vision::view_image(ctx, args),
+        "subagent" => {
+            let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let model = args.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            subagent::run_subagent(ctx.config.clone(), ctx.store.clone(), prompt, model).await
+        }
         "mcp" => {
             // Meta-tool: manage/look up connected MCP servers.
             let sub = arg(args, "action").unwrap_or("list");
@@ -464,6 +473,21 @@ pub fn schemas() -> Vec<Value> {
                         "path": {"type": "string", "description": "Path to the image file (png, jpg, gif, or webp, under 15 MB)"}
                     },
                     "required": ["path"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "subagent",
+                "description": "Delegate a self-contained task to a nested sub-agent that runs in this same workspace with its own loop and tools, then returns its final answer. Use for subtasks that are logically separate from the main thread (research, independent implementation, reading a document). The sub-agent starts with an empty tool history and its own permission checks. Sensitive, and nested depth is capped at 3.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "The self-contained task for the sub-agent, including any context it needs"},
+                        "model": {"type": "string", "description": "Optional model override for the sub-agent"}
+                    },
+                    "required": ["prompt"]
                 }
             }
         }),

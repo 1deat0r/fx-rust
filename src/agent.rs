@@ -117,6 +117,7 @@ pub async fn run(
         max_result_bytes: config.max_tool_result_bytes,
         interactive: req.interactive,
         config: config.clone(),
+        store: store.clone(),
     };
 
     let max_steps = config.max_agent_steps;

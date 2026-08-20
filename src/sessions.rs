@@ -37,6 +37,7 @@ pub struct SessionSummary {
     pub last_text: String,
 }
 
+#[derive(Clone)]
 pub struct SessionStore {
     root: PathBuf,
 }
