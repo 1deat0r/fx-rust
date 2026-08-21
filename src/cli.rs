@@ -1054,6 +1054,54 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
         out.push(('w', "git repository detected".into()));
     }
 
+    // 8. Terminal integration (tmux) — needed for the `terminal` tool.
+    if crate::terminal::tmux_available() {
+        out.push(('w', "tmux detected (terminal sessions enabled)".into()));
+    } else {
+        out.push((
+            'w',
+            "tmux not found — terminal sessions require tmux (apt/brew install tmux)".into(),
+        ));
+    }
+
+    // 9. Background store: parse + live daemon count.
+    match crate::background::BackgroundStore::open() {
+        Ok(store) => {
+            let running = store
+                .list()
+                .iter()
+                .filter(|r| r.status == crate::background::BgStatus::Running)
+                .count();
+            if running > 0 {
+                out.push((
+                    'w',
+                    format!(
+                        "{running} background process(es) running — `fxrs background supervise`"
+                    ),
+                ));
+            }
+        }
+        Err(e) => out.push(('w', format!("background store unreadable: {e:#}"))),
+    }
+
+    // 10. Terminal store: parse + live session count.
+    match crate::terminal::TerminalStore::open() {
+        Ok(store) => {
+            let running = store
+                .list()
+                .iter()
+                .filter(|r| r.status == crate::terminal::TermStatus::Running)
+                .count();
+            if running > 0 {
+                out.push((
+                    'w',
+                    format!("{running} terminal session(s) running — `fxrs terminal`"),
+                ));
+            }
+        }
+        Err(e) => out.push(('w', format!("terminal store unreadable: {e:#}"))),
+    }
+
     out
 }
 

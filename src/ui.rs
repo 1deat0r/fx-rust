@@ -156,8 +156,9 @@ pub async fn run_interactive(
         config.permission_mode.to_string(),
     );
 
-    // Restore-on-resume: surface background daemons that are still alive so a
-    // resumed agent (and its human) immediately see the supervisor state.
+    // Restore-on-resume: surface background daemons and terminal sessions that
+    // are still alive so a resumed agent (and its human) immediately see the
+    // supervisor state.
     if let Ok(bg) = crate::background::BackgroundStore::open() {
         let running = bg
             .list()
@@ -167,6 +168,19 @@ pub async fn run_interactive(
         if running > 0 {
             eprintln!(
                 "\x1b[90m{}\x1b[0m background process(es) running — \x1b[36m/background supervise\x1b[0m",
+                running
+            );
+        }
+    }
+    if let Ok(term) = crate::terminal::TerminalStore::open() {
+        let running = term
+            .list()
+            .iter()
+            .filter(|r| r.status == crate::terminal::TermStatus::Running)
+            .count();
+        if running > 0 {
+            eprintln!(
+                "\x1b[90m{}\x1b[0m terminal session(s) running — \x1b[36m/terminal\x1b[0m",
                 running
             );
         }
