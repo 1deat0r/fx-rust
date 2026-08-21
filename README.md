@@ -34,7 +34,7 @@ code with a single keystroke or fully hands-free.
   `fxrs mcp`.
 - **Upgrade**: `fxrs upgrade --install` checks the latest GitHub release and
   re-installs from source (no-op in this dev build unless `--install`).
-- **Auth store + model catalog**: `fxrs auth add <provider> [--key K] [--base-url U]`
+- **Gateway model catalog**: `fxrs models` fetches and renders the AI Gateway model catalog (`GET /coding-agent/v1/models`) — per-model context window, max output tokens, tool-use/vision/reasoning/caching flags, sorted like upstream (tool-use first). Failure diagnostics classify auth/rate-limit/transport/malformed responses; anonymous fallback on 401/403. `--json`, `--offline`, `--limit N` supported.
   stores API keys in `~/.fx/auth.json` (mode 0600; `fxrs login` is a shortcut);
   env vars always win as a fallback order. `fxrs models` shows the resolved
   provider plus the MCP model catalog (per-server availability + tool counts),

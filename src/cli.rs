@@ -453,8 +453,44 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             Ok(0)
         }
         Some("models") => {
+            let args: Vec<String> = args.cloned().collect();
             let cfg = config::resolve(&cwd())?;
-            let wants_json = args.clone().any(|a| a == "--json");
+            let wants_json = args.iter().any(|a| a == "--json");
+            let wants_offline = args.iter().any(|a| a == "--offline");
+            let limit = args
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|v| v.parse::<usize>().ok());
+
+            // Fetch the gateway model catalog (public endpoint; falls back
+            // anonymously on 401/403). Cache loads for capability-derived
+            // context limits; --offline skips the network.
+            let catalog: Option<
+                std::result::Result<
+                    Vec<crate::gateway::ModelCatalogEntry>,
+                    crate::gateway::Failure,
+                >,
+            > = if wants_offline {
+                None
+            } else {
+                let store = crate::auth::load().unwrap_or_default();
+                let (key, team_url) = crate::auth::resolve_key("gateway", &store);
+                match crate::gateway::fetch_catalog(key.as_deref(), team_url.as_deref()) {
+                    crate::gateway::CatalogResult::Loaded {
+                        entries,
+                        anonymous_fallback_used,
+                        ..
+                    } => {
+                        if !anonymous_fallback_used {
+                            crate::gateway::refresh_cache();
+                        }
+                        Some(Ok(entries))
+                    }
+                    crate::gateway::CatalogResult::Failed { failure, .. } => Some(Err(failure)),
+                }
+            };
+
             if wants_json {
                 let discovery = crate::mcp::discover(&cfg.mcp_servers);
                 let servers: Vec<_> = discovery
@@ -470,27 +506,95 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                         })
                     })
                     .collect();
+                let catalog_json = match &catalog {
+                    Some(Ok(entries)) => Some(
+                        entries
+                            .iter()
+                            .map(|e| {
+                                serde_json::json!({
+                                    "id": e.id,
+                                    "context_window": e.context_window,
+                                    "max_tokens": e.max_tokens,
+                                    "tool_use": e.has_tool_use,
+                                    "vision": e.has_vision,
+                                    "reasoning": e.has_reasoning,
+                                    "file_input": e.has_file_input,
+                                    "web_search": e.has_web_search,
+                                    "fast_mode": e.supports_fast_mode,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    Some(Err(f)) => Some(vec![serde_json::json!({ "error": f.describe() })]),
+                    None => None,
+                };
                 println!(
                     "{}",
                     serde_json::json!({
                         "model": cfg.model,
                         "provider": providers_summary(&cfg),
                         "mcp_servers": servers,
+                        "gateway_catalog": catalog_json,
                     })
                 );
                 return Ok(0);
             }
+
             println!("resolved model: {}", cfg.model);
             println!("provider: {}", providers_summary(&cfg));
+            let keys = crate::auth::load()
+                .map(|s| crate::auth::resolve_key("gateway", &s))
+                .unwrap_or_default();
+            let cred_note = if keys.0.is_some() {
+                ""
+            } else {
+                " (public catalog)"
+            };
             let discovery = crate::mcp::discover(&cfg.mcp_servers);
             if !discovery.states.is_empty() {
                 println!();
-                println!("MCP servers (model catalog):");
+                println!("MCP servers:");
                 print!(
                     "{}",
                     crate::model_catalog::render_models_table(&discovery.states)
                 );
-                println!();
+            }
+            match &catalog {
+                Some(Ok(entries)) => {
+                    let wanted = limit.unwrap_or(40);
+                    let show: Vec<_> = entries.iter().take(wanted).collect();
+                    println!();
+                    println!("Gateway model catalog{cred_note}:");
+                    let caps_header = "CAPABILITIES";
+                    println!("{:<34} {:<7} {:<9} {caps_header}", "ID", "CTX", "OUT");
+                    for e in &show {
+                        let ctx = e
+                            .context_window
+                            .map(|c| format!("{}k", c / 1000))
+                            .unwrap_or_else(|| "—".into());
+                        let out = e
+                            .max_tokens
+                            .map(|c| format!("{}k", c / 1000))
+                            .unwrap_or_else(|| "—".into());
+                        let marker = if e.id == cfg.model { " *" } else { "" };
+                        println!(
+                            "{:<34} {:<7} {:<9} {}{}",
+                            e.id,
+                            ctx,
+                            out,
+                            e.capability_flags(),
+                            marker
+                        );
+                    }
+                    if entries.len() > wanted {
+                        println!("… ({} more; use --limit N)", entries.len() - wanted);
+                    }
+                }
+                Some(Err(f)) => {
+                    println!();
+                    println!("gateway model catalog unavailable: {}", f.describe());
+                }
+                None => {}
             }
             println!("\nSet FX_MODEL to choose. Examples:");
             println!("  openai/gpt-5.4        (AI Gateway default)");
