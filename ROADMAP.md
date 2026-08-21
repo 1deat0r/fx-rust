@@ -22,18 +22,22 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 ### Already ported (core, good fidelity)
 | Surface | Status | Notes |
 |---|---|---|
-| Layered config (`~/.fx/settings.json`, workspace `.fx.json`, env) | ✅ | `src/config.rs` |
-| Permission gates ask/auto/yolo + glob rules + session grants | 🟡 | `src/permissions.rs`; missing sandbox, auto-classifier, approval flows |
+| Layered config (`~/.fx/settings.json`, workspace `.fx.json`, env (+`FX_ADDITIONAL_DIRECTORIES`)) | ✅ | `src/config.rs` |
+| Permission gates ask/auto/yolo + glob rules + session grants | 🟡 | `src/permissions.rs`; sandbox + deterministic auto-classifier landed (P1); approval flows pending |
 | Providers: gateway/OpenAI-compatible + Anthropic + SSE | 🟡 | `src/providers/`; missing model catalog/capabilities, context limits |
-| Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; missing worker runtime, execution memory, question/presentation subsystems |
-| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; missing store, migration, usage, history sidecars |
-| Hooks (4 lifecycle events) | 🟡 | `src/hooks.rs`; upstream has full definitions/prompt/runtime/tool |
+| Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; auto mode now runs sandbox+classifier first, model reviewer on undetermined (P1) |
+| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1) |
+| Hooks (4 lifecycle events + full input builders) | 🟡 | `src/hooks.rs`; upstream has full definitions/prompt/runtime/tool |
 | MCP stdio JSON-RPC | 🟡 | `src/mcp.rs`; stdio only |
-| Toolkit | 🟡 | 21 tools; see tool matrix |
-| CLI (interactive/ask/resume/sessions/session/status/permissions/setup/models/help/version/hooks/mcp/upgrade) | 🟡 | missing doctor/usage/replay/auth/gh/review/capture/one-off/terminal/mcp_lookup |
+| Toolkit | 🟡 | 21+ tools; see tool matrix |
+| CLI (interactive/ask/resume/sessions/session/status/permissions/setup/models/help/version/hooks/mcp/upgrade/doctor/usage/replay) | 🟡 | doctor/usage/replay landed (P1); auth/gh/review/capture/one-off/terminal/mcp_lookup pending |
 | Upgrade (`fxrs upgrade --install`) | 🟡 | `src/upgrade.rs` |
 | Vision (`view_image`) | ✅ | |
 | Minimal subagent | 🟡 | depth-capped single tool; upstream is a 21-file subsystem |
+| **Shell-command lexer + classifier/effect** | ✅ | **P1 — `src/shell_command.rs`** (quotes/heredocs/assignments, class + writes/network/destructive) |
+| **Permission sandbox + auto-classifier** | ✅ | **P1 — `src/permissions.rs`** (`Sandbox`, `auto_classify`; deterministic fast path in auto mode) |
+| **Usage store (`~/.fx/usage.jsonl`) + CLI** | ✅ | **P1 — `src/usage.rs`** (append-only records, `--period`, `fxrs usage`) |
+| **Slash-command router + catalog** | ✅ | **P1 — `src/slash_commands.rs`** (upstream tokens routed; wired into shell) |
 
 ### Not yet ported (upstream surface → fxrs gap)
 | Subsystem | Upstream refs | Notes |
@@ -50,8 +54,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | native/tmux/browser sessions, shell resolver, recovery, takeover |
 | Sessions full | `core/session/*` (40 files) | store types/paths, codec, catalog, discovery, replay, migration, usage sidecars, prompt history, result store, artifacts |
 | Config catalog | `core/config/settings_catalog.zig`, `settings_store.zig`, `context_limits.zig`, `input_appearance.zig`, `presentation_mode.zig` | settings schema + catalog |
-| Permissions full | `core/permissions/*` (13 files) | sandbox, command admission, auto-classifier, approval flow, direct command |
-| Slash commands | `core/slash_commands/*`, `builtins/commands.zig` | router + command catalog |
+| Permissions full | `core/permissions/*` (13 files) | sandbox + deterministic auto-classifier landed (P1); command admission, approval flow (model reviewer exists), direct command pending |
+| Slash commands | `core/slash_commands/*`, `builtins/commands.zig` | router + catalog landed (P1): help/exit/clear/version/status/model/permissions/sessions/session/resume/usage/doctor/setup/trace/feedback/workspace; compact/login/logout routed as not-ready |
 | Modes & mods | `core/modes/*`, `core/mods/*`, `builtins/modes.zig` | mode contract + registry |
 | Hooks full | `core/hooks/*` (6 files) | definitions, common, prompt, runtime, tool |
 | Skills full | `core/skills/*`, `ui/skills_screen.zig` | contract, invocation, runtime, commands |
@@ -60,13 +64,13 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Workspace runtime | `core/workspace/*` (21 files) | file index, change tracker, grep, glob, path completion, access, menus, diagnostics, metrics, record tape |
 | Agent runtime full | `core/agent/*` | worker runtime, execution memory, question prompt/answer, tool preparation, presentation |
 | GitHub | `core/github/*` (3 files) | git context, publish (pr/issue), workflows |
-| Usage reporting | `core/session/profile_usage*`, `usage*.zig`, `core/cli/usage_cli_runtime.zig` | usage.jsonl, recovery, reports, usage menu |
+| Usage reporting | `core/session/profile_usage*`, `usage*.zig`, `core/cli/usage_cli_runtime.zig` | usage.jsonl + `fxrs usage` landed (P1); recovery, reports, usage menu pending |
 | Feedback | `core/feedback/runtime.zig` | |
 | Notifications + sounds | `core/notifications/*` | contract + bundled sounds |
 | Tasks | `core/tasks/task_helpers.zig` | |
 | Devbox | `builtins/devbox.zig`, `core/execution/devbox_executor.zig` | |
 | Browser workspace tools | `builtins/browser_workspace_tools.zig` | |
-| Shell command parsing | `core/shell_command/*` (3 files) | classification, effect, lex |
+| Shell command parsing | `core/shell_command/*` (3 files) | ✅ landed (P1) — lexer + classification + effect |
 | Web tooling full | `core/tooling/*` (30 files) | web fetch/search runtimes, tool specs/admission/dispatch, file mutations, result limits |
 | Shared/utilities | `core/shared/*` (18 files) | types, io, collections, display width, unicode data, token estimate, context encoding |
 | Testing infra | `tests/**`, `benchmarks/**`, `sdk/tests/**` | e2e, json-schema corpus, benchmark exports |
@@ -92,7 +96,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 ## Phased plan
 
 - **Phase 0 — Mandate + scaffolding (this commit).** ROADMAP, parity matrix, README correction, memory.
-- **Phase 1 — Core backend parity.** Full session store (codec, catalog, discovery, migration, sidecars), config catalog/context limits, permissions sandbox + auto-classifier + approval flows, slash-command catalog, full agent runtime (worker, execution memory, tool preparation), shell-command lex/classification, web tooling full set, full hooks definitions, `doctor`, `usage`, `replay` CLI.
+- **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders. Remaining: full session store (codec/catalog/discovery/migration), config catalog/context limits, approval-flow polish, full agent runtime (worker/execution memory/tool preparation), web tooling full set, full hooks definitions.
 - **Phase 2 — Protocols & auth.** Full MCP (streamable HTTP, legacy SSE, elicitation, auth, negotiation, json-schema), auth/login (OAuth + keychain), gateway model catalog/capabilities, context limits, prompt history.
 - **Phase 3 — Execution & terminal.** Background store/supervisor, process tree, local + devbox executors, terminal integration (native/tmux/browser), terminal + background_process tools.
 - **Phase 4 — Subagent & modes.** Full subagent subsystem + UI, modes/mods registries.

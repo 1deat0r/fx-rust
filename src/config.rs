@@ -71,6 +71,7 @@ pub struct ProjectConfig {
     pub max_tool_result_bytes: Option<usize>,
     pub context: Option<bool>,
     pub sandbox: Option<String>,
+    pub additional_directories: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +102,9 @@ pub struct Config {
     pub permission_rules: BTreeMap<String, ToolRule>,
     /// Storage the resolved settings file lives in (for /settings).
     pub settings_path: Option<PathBuf>,
+    /// Extra directories tools may act on (workspace entry / .fx.json),
+    /// used by the permission sandbox.
+    pub additional_directories: Vec<PathBuf>,
     /// Merged MCP servers (workspace layer wins by name).
     pub mcp_servers: Vec<McpServerConfig>,
 }
@@ -110,7 +114,12 @@ pub fn home_dir() -> Option<PathBuf> {
 }
 
 pub fn fx_home() -> PathBuf {
-    home_dir().map(|h| h.join(".fx")).unwrap_or_else(|| PathBuf::from(".fx"))
+    // FX_HOME overrides the data dir (tests / sandboxed runs); default ~/.fx.
+    std::env::var("FX_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| home_dir().map(|h| h.join(".fx")).unwrap_or_else(|| PathBuf::from(".fx")))
 }
 
 pub fn settings_path() -> PathBuf {
@@ -234,6 +243,24 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         }
     }
 
+    let additional_directories: Vec<PathBuf> = std::env::var("FX_ADDITIONAL_DIRECTORIES")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(|v| v.split(':').map(PathBuf::from).collect())
+        .or_else(|| {
+            let mut dirs: Vec<PathBuf> = ws_entry
+                .additional_directories
+                .iter()
+                .flatten()
+                .map(PathBuf::from)
+                .collect();
+            if let Some(proj) = project.additional_directories {
+                dirs.extend(proj.into_iter().map(PathBuf::from));
+            }
+            if dirs.is_empty() { None } else { Some(dirs) }
+        })
+        .unwrap_or_default();
+
     Ok(Config {
         workspace: workspace.to_path_buf(),
         model,
@@ -245,6 +272,7 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         sandbox,
         permission_rules,
         settings_path: Some(settings_path()),
+        additional_directories,
         mcp_servers: merge_mcp_servers(
             &merge_mcp_servers(&settings.mcp_servers, &ws_entry.mcp_servers),
             &project.mcp_servers,

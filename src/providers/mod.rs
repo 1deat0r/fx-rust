@@ -337,6 +337,7 @@ mod tests {
             sandbox: crate::config::SandboxMode::None,
             permission_rules: Default::default(),
             settings_path: None,
+            additional_directories: Vec::new(),
             mcp_servers: Vec::new(),
         };
         let p = resolve_provider(&cfg).unwrap();

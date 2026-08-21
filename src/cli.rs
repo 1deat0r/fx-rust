@@ -182,6 +182,62 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             println!("  ollama/llama3.1        (OpenAI-compatible base URL)");
             Ok(0)
         }
+        Some("doctor") => {
+            let cfg = config::resolve(&cwd())?;
+            let issues = doctor_checks(&cfg);
+            if issues.is_empty() {
+                println!("fxrs doctor: all checks passed");
+            } else {
+                let mut hard = 0;
+                for (sev, msg) in &issues {
+                    let tag = if *sev == 'f' { "FAIL" } else { "WARN" };
+                    println!("[{tag}] {msg}");
+                    if *sev == 'f' {
+                        hard += 1;
+                    }
+                }
+                if hard > 0 {
+                    bail!("fxrs doctor: {hard} failing check(s)");
+                }
+            }
+            Ok(0)
+        }
+        Some("usage") => {
+            let mut period = "7d";
+            if let Some(p) = args.clone().next() {
+                period = p;
+            }
+            let since = crate::usage::parse_period(period);
+            let totals = crate::usage::UsageStore::new().aggregate(since);
+            println!("fxrs usage (last {period}):");
+            println!("  turns: {}", totals.turns);
+            println!("  sessions: {}", totals.sessions.len());
+            println!("  tokens in:  {}	({:.1}M)", totals.input_tokens, totals.input_tokens as f64 / 1e6);
+            println!("  tokens out: {}	({:.1}M)", totals.output_tokens, totals.output_tokens as f64 / 1e6);
+            println!("  tokens total: {}	({:.1}M)", totals.total_tokens, totals.total_tokens as f64 / 1e6);
+            println!("  tool calls: {}", totals.tool_calls);
+            println!("  steps: {}", totals.steps);
+            println!("  est. cost: ${:.4}", totals.cost_usd);
+            Ok(0)
+        }
+        Some("replay") => {
+            let id = args.next().map(|s| s.to_string()).unwrap_or_default();
+            if id.is_empty() {
+                bail!("usage: fxrs replay <session-id>");
+            }
+            let cfg = config::resolve(&cwd())?;
+            let store = SessionStore::new()?;
+            let sess = store.load_or_error(&cfg.workspace, &id)?;
+            for m in &sess.messages {
+                match m.role_str() {
+                    "user" => println!("\x1b[1;32muser\x1b[0m: {}", m.last_text().unwrap_or_default()),
+                    "assistant" => println!("\x1b[1;36massistant\x1b[0m: {}", m.last_text().unwrap_or_default()),
+                    "tool" => println!("\x1b[90mtool\x1b[0m: {}", shade_line(&m.last_text().unwrap_or_default())),
+                    _ => {}
+                }
+            }
+            Ok(0)
+        }
         Some("help") | Some("-h") | Some("--help") => {
             show_cli_help();
             Ok(0)
@@ -215,6 +271,93 @@ fn providers_summary(_cfg: &config::Config) -> String {
     }
 }
 
+/// Run a battery of diagnostics, returning `(severity, message)` pairs.
+/// `'f'` = hard failure (exit 1), `'w'` = warning.
+pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
+    use std::path::PathBuf;
+    let mut out: Vec<(char, String)> = Vec::new();
+
+    // 1. fx home writable + settings parses.
+    let home = config::fx_home();
+    match std::fs::create_dir_all(&home) {
+        Ok(_) => {}
+        Err(e) => out.push(('f', format!("cannot create ~/.fx ({}): {e}", home.display()))),
+    }
+    let settings = config::settings_path();
+    if settings.exists() {
+        if let Err(e) = config::resolve(&cfg.workspace) {
+            out.push(('f', format!("settings.json failed to parse: {e:#}")));
+        }
+    }
+
+    // 2. Model configured.
+    let has_gateway = std::env::var("AI_GATEWAY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
+    let has_ai = std::env::var("AI_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) && std::env::var("AI_BASE_URL").map(|v| !v.is_empty()).unwrap_or(false);
+    if !(has_gateway || has_anthropic || has_ai) {
+        out.push(('f', "no model endpoint configured (AI_GATEWAY_API_KEY / ANTHROPIC_API_KEY / AI_BASE_URL+AI_API_KEY). run `fxrs setup`".into()));
+    } else {
+        out.push(('w', "model endpoint configured; keys are not validated here".into()));
+    }
+
+    // 3. Workspace writable.
+    match std::fs::metadata(&cfg.workspace) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => out.push(('f', format!("workspace is not a directory: {}", cfg.workspace.display()))),
+        Err(e) => out.push(('f', format!("workspace missing: {} ({e})", cfg.workspace.display()))),
+    }
+
+    // 4. Sessions dir.
+    let sessions_dir = home.join("sessions");
+    if !sessions_dir.is_dir() {
+        out.push(('w', format!("no sessions yet: {}", sessions_dir.display())));
+    }
+
+    // 5. MCP server configs: command binaries exist when a command is given.
+    for srv in &cfg.mcp_servers {
+        if srv.transport.as_deref().unwrap_or("stdio") != "stdio" {
+            out.push(('w', format!("mcp server `{}`: non-stdio transport not yet ported", srv.name)));
+            continue;
+        }
+        if let Some(cmd) = &srv.command {
+            let path = PathBuf::from(cmd);
+            let found = if path.is_absolute() { path.is_file() } else { which_in_path(cmd) };
+            if !found {
+                out.push(('w', format!("mcp server `{}`: command `{cmd}` not found in PATH", srv.name)));
+            }
+        }
+    }
+
+    // 6. Hooks discovered (informational).
+    for kind in [crate::hooks::HookKind::PreToolUse, crate::hooks::HookKind::Stop, crate::hooks::HookKind::PostTurnEnd, crate::hooks::HookKind::AttentionRequired] {
+        let found = crate::hooks::discover(kind, &cfg.workspace);
+        if !found.is_empty() {
+            out.push(('w', format!("hook {}: {} script(s)", kind.event_name(), found.len())));
+        }
+    }
+
+    // 7. Git repo (informational).
+    let git_dir = cfg.workspace.join(".git");
+    if git_dir.exists() {
+        out.push(('w', "git repository detected".into()));
+    }
+
+    out
+}
+
+fn which_in_path(cmd: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|d| d.join(cmd).is_file())
+}
+
+fn shade_line(s: &str) -> String {
+    if s.len() > 240 {
+        format!("{}…", s.chars().take(240).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
 fn show_cli_help() {
     println!(
         "fxrs — Rust port of fx (Vercel Labs) — a tiny terminal coding agent\n\n\
@@ -227,6 +370,9 @@ fn show_cli_help() {
          \x1b[32m  fxrs status\x1b[0m             show config status\n\
          \x1b[32m  fxrs permissions\x1b[0m        show permission rules\n\
          \x1b[32m  fxrs models\x1b[0m             show resolved model / provider\n\
+         \x1b[32m  fxrs doctor\x1b[0m            run environment diagnostics\n\
+         \x1b[32m  fxrs usage [24h|7d|30d|all]\x1b[0m token usage and cost\n\
+         \x1b[32m  fxrs replay <id>\x1b[0m         replay a session transcript\n\
          \x1b[32m  fxrs setup\x1b[0m              provider configuration guide\n\
          \x1b[32m  fxrs version\x1b[0m            version info\n\
          \x1b[32m  fxrs help\x1b[0m               this help\n\n\

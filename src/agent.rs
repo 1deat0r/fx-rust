@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::config::{Config, FirstCallToolChoice};
 use crate::permissions::{Decision, PermissionMode, Permissions};
@@ -72,6 +72,12 @@ pub async fn run(
     for (tool, pattern) in grants_map.iter() {
         permissions.grants.allow(tool, pattern);
     }
+    // Path sandbox: workspace plus configured additional directories.
+    let sandbox = crate::permissions::Sandbox {
+        mode: config.sandbox,
+        workspace: config.workspace.clone(),
+        additional: config.additional_directories.clone(),
+    };
 
     // System prompt: static guidance + workspace context + AGENTS.md.
     let mut system = String::new();
@@ -275,17 +281,18 @@ pub async fn run(
             finish = FinishReason::Stop;
             // Lifecycle hooks at stop / end of turn.
             let visible_text = if display_text.trim().is_empty() { text.clone() } else { display_text.clone() };
-            let stop_input = json!({
-                "session_id": session_id,
-                "workspace": config.workspace.display().to_string(),
-                "assistant_text": visible_text,
-            });
-            crate::hooks::run(crate::hooks::HookKind::Stop, stop_input, &config.workspace, 30);
-            crate::hooks::run(crate::hooks::HookKind::PostTurnEnd, json!({
-                "session_id": session_id,
-                "workspace": config.workspace.display().to_string(),
-                "steps": steps,
-            }), &config.workspace, 30);
+            crate::hooks::run(
+                crate::hooks::HookKind::Stop,
+                crate::hooks::stop_input(&config.workspace, Some(&session_id), &visible_text),
+                &config.workspace,
+                30,
+            );
+            crate::hooks::run(
+                crate::hooks::HookKind::PostTurnEnd,
+                crate::hooks::post_turn_end_input(&config.workspace, Some(&session_id), steps),
+                &config.workspace,
+                30,
+            );
             break;
         }
 
@@ -358,7 +365,22 @@ pub async fn run(
                             call.name
                         ))),
                         PermissionMode::Auto => {
-                            auto_review(&provider, &system, &transcript, &call, config.clone()).await
+                            use crate::permissions::{AutoDecision, auto_classify};
+                            match auto_classify(&crate::permissions::PermissionRequest {
+                                tool_name: &call.name,
+                                target: &target,
+                                input_text: call.arguments.clone(),
+                                workspace: &config.workspace,
+                            }, &sandbox) {
+                                AutoDecision::Allow => execute_tool(&ctx, &effective_call).await,
+                                AutoDecision::Deny(reason) => Ok(tools::err_json(format!(
+                                    "{}: not auto-approved: {}",
+                                    call.name, reason
+                                ))),
+                                AutoDecision::Undetermined => {
+                                    auto_review(&provider, &system, &transcript, &call, config.clone()).await
+                                }
+                            }
                         }
                     },
                 };
@@ -414,6 +436,27 @@ pub async fn run(
     };
     if let Err(e) = store.save(&sess) {
         eprintln!("[fxrs] session save failed: {e:#}");
+    }
+
+    // Usage sidecar: one record per turn (~/.fx/usage.jsonl).
+    {
+        let usage = crate::usage::UsageStore::new();
+        let rec = crate::usage::UsageRecord {
+            ts_ms: crate::usage::now_ms(),
+            workspace: config.workspace.display().to_string(),
+            session_id: session_id.clone(),
+            model: provider.model.clone(),
+            input_tokens: 0,
+            output_tokens: total_tokens,
+            total_tokens,
+            cost_usd,
+            steps,
+            tool_calls,
+            interactive: req.interactive,
+        };
+        if let Err(e) = usage.record(&rec) {
+            eprintln!("[fxrs] usage record failed: {e:#}");
+        }
     }
 
     Ok(AgentOutput {

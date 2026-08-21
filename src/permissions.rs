@@ -114,6 +114,7 @@ pub enum Decision {
     Unresolved,
 }
 
+#[allow(dead_code)] // input_text kept for reviewer/prompt text
 pub struct PermissionRequest<'a> {
     pub tool_name: &'a str,
     /// Target for rule matching: absolute path for file tools, command text
@@ -138,6 +139,7 @@ impl GrantStore {
         // in the vector wins when inserted afterwards.
         self.grants.push((tool.to_string(), target.to_string()));
     }
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.grants.clear();
     }
@@ -233,6 +235,7 @@ impl Permissions {
         Self { mode, rules, grants: GrantStore::default() }
     }
 
+    #[allow(dead_code)]
     pub fn set_mode(&mut self, mode: PermissionMode) {
         self.mode = mode;
     }
@@ -297,6 +300,7 @@ impl Permissions {
         }
     }
 
+    #[allow(dead_code)]
     pub fn human_decide(
         &mut self,
         req: &PermissionRequest,
@@ -428,5 +432,199 @@ mod tests {
         let mut p = Permissions::default();
         p.grants.allow("edit", "/ws/");
         assert_eq!(p.decide(&req("edit_file", "/ws/src/main.rs", "/ws")), Decision::Allow);
+    }
+}
+
+// ------------------------------------------------------------------ sandbox
+
+/// Set of directories a tool may act on. When sandbox mode is `None`
+/// (`sandbox: none`) every path is allowed by the sandbox (the permission
+/// gates still apply). `Auto` sandbox confines to the workspace plus any
+/// additional directories from config; `Os` confines even harder (nothing
+/// outside the workspace is writable).
+#[derive(Debug, Clone)]
+pub struct Sandbox {
+    pub mode: crate::config::SandboxMode,
+    pub workspace: std::path::PathBuf,
+    pub additional: Vec<std::path::PathBuf>,
+}
+
+impl Sandbox {
+    pub fn allows(&self, target: &str) -> bool {
+        if self.mode == crate::config::SandboxMode::None {
+            return true;
+        }
+        let p = std::path::Path::new(target);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.workspace.join(p)
+        };
+        let mut base = std::iter::once(self.workspace.clone())
+            .chain(self.additional.iter().cloned());
+        base.any(|allowed| abs.starts_with(&allowed))
+    }
+}
+
+// ------------------------------------------------------------ auto classifier
+
+/// Deterministic decision for unresolved calls in `auto` mode. Keeps the fast
+/// common cases (read-only bash, in-sandbox edits) moving without a prompt;
+/// dangerous/unknown calls fall back to the review stage or are denied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoDecision {
+    Allow,
+    Deny(&'static str),
+    /// The classifier cannot decide: defer to the model reviewer (or human).
+    Undetermined,
+}
+
+/// Classify an unresolved tool call under `auto` mode, using the sandbox for
+/// path checks and the shell classifier for command effects.
+pub fn auto_classify(req: &PermissionRequest, sandbox: &Sandbox) -> AutoDecision {
+    let tool = req.tool_name;
+    if tool.starts_with("mcp__") {
+        // The human configured this server; trust published tools.
+        return AutoDecision::Allow;
+    }
+    match tool_kind(tool) {
+        "read" => AutoDecision::Allow,
+        "memory" | "question" | "vision" | "subagent" => AutoDecision::Allow,
+        "web" => match tool {
+            "web_search" | "web_fetch" => AutoDecision::Allow,
+            _ => AutoDecision::Undetermined,
+        },
+        "edit" => {
+            if sandbox.allows(req.target) {
+                AutoDecision::Allow
+            } else {
+                AutoDecision::Deny("edits outside the sandbox are not auto-approved")
+            }
+        }
+        "skill" => AutoDecision::Deny("install_skill is not auto-approved"),
+        "bash" => auto_classify_bash(req, sandbox),
+        _ => AutoDecision::Undetermined,
+    }
+}
+
+fn auto_classify_bash(req: &PermissionRequest, sandbox: &Sandbox) -> AutoDecision {
+    use crate::shell_command::{CommandClass, classify};
+    let eff = classify(req.target);
+    match eff.class {
+        CommandClass::ReadOnly => AutoDecision::Allow,
+        CommandClass::Write => {
+            if eff.destructive {
+                return AutoDecision::Deny("destructive command is not auto-approved");
+            }
+            // Writes must stay inside the sandbox.
+            for p in &eff.paths {
+                let expanded = p.strip_prefix('~').unwrap_or(p);
+                let path = std::path::Path::new(expanded);
+                if path.is_absolute() && !sandbox.allows(expanded) {
+                    return AutoDecision::Deny("command writes outside the sandbox");
+                }
+            }
+            AutoDecision::Allow
+        }
+        CommandClass::Network => {
+            // Read-only network (curl GET, git fetch/pull) is fine; pushes and
+            // POST bodies are not auto-approved.
+            if eff.destructive {
+                AutoDecision::Deny("network write/push is not auto-approved")
+            } else if eff.raw.is_empty() {
+                AutoDecision::Deny("network command is not auto-approved")
+            } else {
+                AutoDecision::Allow
+            }
+        }
+        CommandClass::Package => {
+            AutoDecision::Deny("package/tool installation is not auto-approved")
+        }
+        CommandClass::Interactive => {
+            AutoDecision::Deny("interactive/long-running process is not auto-approved")
+        }
+        CommandClass::Dangerous => AutoDecision::Deny("dangerous command is not auto-approved"),
+        CommandClass::Unknown => AutoDecision::Undetermined,
+    }
+}
+
+#[cfg(test)]
+mod test_auto {
+    use super::*;
+    use crate::config::SandboxMode;
+
+    fn req<'a>(tool: &'a str, target: &'a str, ws: &'a str) -> PermissionRequest<'a> {
+        PermissionRequest {
+            tool_name: tool,
+            target,
+            input_text: String::new(),
+            workspace: std::path::Path::new(ws),
+        }
+    }
+
+    fn sb(ws: &str) -> Sandbox {
+        Sandbox {
+            mode: SandboxMode::Auto,
+            workspace: std::path::PathBuf::from(ws),
+            additional: vec![std::path::PathBuf::from("/tmp/shared")],
+        }
+    }
+
+    #[test]
+    fn sandbox_allows_workspace_and_additional() {
+        let s = sb("/ws");
+        assert!(s.allows("/ws/src/main.rs"));
+        assert!(s.allows("/tmp/shared/x.txt"));
+        assert!(!s.allows("/etc/passwd"));
+    }
+
+    #[test]
+    fn sandbox_none_allows_everything() {
+        let s = Sandbox {
+            mode: SandboxMode::None,
+            workspace: "/ws".into(),
+            additional: vec![],
+        };
+        assert!(s.allows("/etc/passwd"));
+    }
+
+    #[test]
+    fn read_tools_allowed_in_auto() {
+        let s = sb("/ws");
+        assert_eq!(auto_classify(&req("read_file", "/ws/a.txt", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("web_search", "x", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("memory", "", "/ws"), &s), AutoDecision::Allow);
+    }
+
+    #[test]
+    fn edits_inside_sandbox_allowed_outside_denied() {
+        let s = sb("/ws");
+        assert_eq!(auto_classify(&req("write_file", "/ws/a.txt", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("delete_file", "/etc/passwd", "/ws"), &s), AutoDecision::Deny("edits outside the sandbox are not auto-approved"));
+    }
+
+    #[test]
+    fn bash_readonly_allowed() {
+        let s = sb("/ws");
+        assert_eq!(auto_classify(&req("run_command", "git status", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("run_command", "ls -la", "/ws"), &s), AutoDecision::Allow);
+    }
+
+    #[test]
+    fn bash_writes_confined() {
+        let s = sb("/ws");
+        assert_eq!(auto_classify(&req("run_command", "cp a.txt b.txt", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("run_command", "rm -rf /etc", "/ws"), &s), AutoDecision::Deny("command writes outside the sandbox"));
+        assert_eq!(auto_classify(&req("run_command", "sudo apt update", "/ws"), &s), AutoDecision::Deny("dangerous command is not auto-approved"));
+        assert_eq!(auto_classify(&req("run_command", "curl -s https://example.com", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(auto_classify(&req("run_command", "git push origin main", "/ws"), &s), AutoDecision::Deny("network write/push is not auto-approved"));
+        assert_eq!(auto_classify(&req("run_command", "npm install", "/ws"), &s), AutoDecision::Deny("package/tool installation is not auto-approved"));
+        assert_eq!(auto_classify(&req("run_command", "vim x", "/ws"), &s), AutoDecision::Deny("interactive/long-running process is not auto-approved"));
+    }
+
+    #[test]
+    fn unknown_undetermined() {
+        let s = sb("/ws");
+        assert_eq!(auto_classify(&req("run_command", "frobnicate --all", "/ws"), &s), AutoDecision::Undetermined);
     }
 }

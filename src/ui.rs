@@ -173,74 +173,158 @@ pub async fn run_interactive(
         }
         let _ = rl.add_history_entry(line.clone());
 
-        match trimmed {
-            "/exit" | "/quit" | "/q" => break,
-            "/help" | "/h" => {
-                show_help();
-                continue;
-            }
-            "/clear" | "/cls" => {
-                let _ = std::io::stdout().lock().write_all(b"\x1b[2J\x1b[H");
-                continue;
-            }
-            "/version" | "/v" => {
-                println!("fxrs {}", crate::version::VERSION);
-                continue;
-            }
-            "/status" | "/s" => {
-                println!("model: {}", provider.model);
-                println!("permissions: {:?}", config.permission_mode.to_string());
-                println!("workspace: {}", config.workspace.display());
-                println!("max steps: {}", config.max_agent_steps);
-                println!("max tool result bytes: {}", config.max_tool_result_bytes);
-                continue;
-            }
-            "/model" => {
-                println!("current model: {}", provider.model);
-                println!("set with FX_MODEL (e.g. openai/gpt-5.4 or claude-sonnet-4-6)");
-                continue;
-            }
-            "/permissions" | "/perm" => {
-                println!("permission mode: {:?}", config.permission_mode.to_string());
-                println!("set with FX_PERMISSION_MODE=ask|auto|yolo");
-                continue;
-            }
-            "/sessions" | "/ls" => {
-                let sessions = store.list(Some(&config.workspace))?;
-                for s in &sessions {
-                    println!("{}\t{}\t{} msgs\t{}", s.id, s.model, s.messages, s.last_text);
-                }
-                println!("({} sessions)", sessions.len());
-                continue;
-            }
-            "/trace" => {
-                interactive_human.trace = !interactive_human.trace;
-                println!("trace {}", if interactive_human.trace { "on" } else { "off" });
-                continue;
-            }
-            "/feedback" => {
-                println!("fxrs feedback: open an issue at github.com/1deat0r/fx-rust");
-                continue;
-            }
-            "/resume" => {
-                let sessions = store.list(Some(&config.workspace))?;
-                if sessions.is_empty() {
-                    println!("no sessions to resume");
+        if let Some(cmd) = crate::slash_commands::parse(trimmed) {
+            use crate::slash_commands::Slash;
+            match cmd {
+                Slash::Exit => break,
+                Slash::Help => {
+                    println!("{}", crate::slash_commands::render_help());
                     continue;
                 }
-                let top = &sessions[0].id;
-                println!("resuming {top} (latest)");
-                let req = AgentRequest {
-                    prompt: None,
-                    system: None,
-                    interactive: true,
-                    resume: Some(top.clone()),
-                    messages: Vec::new(),
-                };
-                run_one(&config, &store, &interactive_human, req).await?;
-                continue;
+                Slash::Clear => {
+                    let _ = std::io::stdout().lock().write_all(b"\x1b[2J\x1b[H");
+                    continue;
+                }
+                Slash::Version => {
+                    println!("fxrs {}", crate::version::VERSION);
+                    continue;
+                }
+                Slash::Status => {
+                    println!("model: {}", provider.model);
+                    println!("permissions: {:?}", config.permission_mode.to_string());
+                    println!("workspace: {}", config.workspace.display());
+                    println!("max steps: {}", config.max_agent_steps);
+                    println!("max tool result bytes: {}", config.max_tool_result_bytes);
+                    println!("sandbox: {:?}", config.sandbox);
+                    println!("additional dirs: {}", config.additional_directories.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+                    continue;
+                }
+                Slash::Model => {
+                    println!("current model: {}", provider.model);
+                    println!("set with FX_MODEL (e.g. openai/gpt-5.4 or claude-sonnet-4-6)");
+                    continue;
+                }
+                Slash::Permissions => {
+                    println!("permission mode: {:?}", config.permission_mode.to_string());
+                    println!("set with FX_PERMISSION_MODE=ask|auto|yolo");
+                    continue;
+                }
+                Slash::Sessions => {
+                    let sessions = store.list(Some(&config.workspace))?;
+                    for s in &sessions {
+                        println!("{}\t{}\t{} msgs\t{}", s.id, s.model, s.messages, s.last_text);
+                    }
+                    println!("({} sessions)", sessions.len());
+                    continue;
+                }
+                Slash::Session(id) => {
+                    let sessions = store.list(Some(&config.workspace))?;
+                    let target = id
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .or_else(|| sessions.first().map(|s| s.id.clone()));
+                    match target {
+                        Some(t) => match store.load(&config.workspace, &t)? {
+                            Some(sess) => {
+                                println!("id: {}", sess.id);
+                                println!("workspace: {}", sess.workspace);
+                                println!("updated_ms: {}", sess.updated_ms);
+                                println!("model: {}", sess.model);
+                                println!("mode: {:?}", sess.mode);
+                                for m in &sess.messages {
+                                    println!("-- {}: {}", m.role_str(), m.last_text().unwrap_or_default());
+                                }
+                            }
+                            None => println!("no session `{t}`"),
+                        },
+                        None => println!("no sessions"),
+                    }
+                    continue;
+                }
+                Slash::Resume(id) => {
+                    let sessions = store.list(Some(&config.workspace))?;
+                    let target = match id.as_deref() {
+                        Some("last") | None => sessions.first().map(|s| s.id.clone()),
+                        Some(t) => Some(t.to_string()),
+                    };
+                    match target {
+                        Some(rid) => {
+                            println!("resuming {rid}");
+                            let req = AgentRequest {
+                                prompt: None,
+                                system: None,
+                                interactive: true,
+                                resume: Some(rid),
+                                messages: Vec::new(),
+                            };
+                            run_one(&config, &store, &interactive_human, req).await?;
+                        }
+                        None => println!("no sessions to resume"),
+                    }
+                    continue;
+                }
+                Slash::Usage(period) => {
+                    let period = period.unwrap_or_else(|| "7d".into());
+                    let since = crate::usage::parse_period(&period);
+                    let totals = crate::usage::UsageStore::new().aggregate(since);
+                    println!(
+                        "usage ({period}): {} turns · {}k in / {}k out / {}k total tokens · {} tool calls · ${:.4}",
+                        totals.turns,
+                        totals.input_tokens / 1000,
+                        totals.output_tokens / 1000,
+                        totals.total_tokens / 1000,
+                        totals.tool_calls,
+                        totals.cost_usd,
+                    );
+                    continue;
+                }
+                Slash::Doctor => {
+                    let issues = crate::cli::doctor_checks(&config);
+                    if issues.is_empty() {
+                        println!("all checks passed ✓");
+                    } else {
+                        for (sev, msg) in &issues {
+                            println!("[{}] {}", if *sev == 'w' { "warn" } else { "fail" }, msg);
+                        }
+                    }
+                    continue;
+                }
+                Slash::Setup => {
+                    println!("fxrs needs a model endpoint. Configure one of:");
+                    println!("  AI_GATEWAY_API_KEY=...            (Vercel AI Gateway, default)");
+                    println!("  ANTHROPIC_API_KEY=...             (native Anthropic)");
+                    println!("  AI_BASE_URL=... AI_API_KEY=...    (OpenAI-compatible local server)");
+                    println!("  FX_MODEL=...                      (model id, default openai/gpt-5.4)");
+                    println!("  FX_PERMISSION_MODE=ask|auto|yolo  (default auto)");
+                    continue;
+                }
+                Slash::Trace => {
+                    interactive_human.trace = !interactive_human.trace;
+                    println!("trace {}", if interactive_human.trace { "on" } else { "off" });
+                    continue;
+                }
+                Slash::Feedback => {
+                    println!("fxrs feedback: open an issue at github.com/1deat0r/fx-rust");
+                    continue;
+                }
+                Slash::Workspace => {
+                    println!("workspace: {}", config.workspace.display());
+                    let ag = crate::config::load_project_instructions(&config.workspace);
+                    if ag.is_empty() {
+                        println!("AGENTS.md: (none loaded)");
+                    } else {
+                        println!("AGENTS.md: {} file(s), {} chars", ag.len(), ag.iter().map(|s| s.len()).sum::<usize>());
+                    }
+                    continue;
+                }
+                Slash::Compact => println!("(not ready: context compaction is a later phase)"),
+                Slash::Login => println!("(not ready: OAuth login is a later phase)"),
+                Slash::Logout => println!("(not ready: OAuth logout is a later phase)"),
+                Slash::Unknown(name) => {
+                    println!("unknown slash command `/{name}` — try /help");
+                    continue;
+                }
             }
-            _ => {}
         }
 
         let mut request = AgentRequest {
@@ -302,11 +386,7 @@ fn short_id(id: &str) -> String {
     }
 }
 
-fn show_help() {
-    println!(
-        "commands:\n  \x1b[32m/help\x1b[0m      this help\n  \x1b[32m/exit\x1b[0m      leave (also Ctrl-D)\n  \x1b[32m/status\x1b[0m    model/permission/workspace info\n  \x1b[32m/sessions\x1b[0m   list sessions for this workspace\n  \x1b[32m/resume\x1b[0m     resume latest session\n  \x1b[32m/permissions\x1b[0m show permission mode\n  \x1b[32m/model\x1b[0m      show current model\n  \x1b[32m/clear\x1b[0m      clear screen\n  \x1b[32m/trace\x1b[0m      toggle tool-call tracing\n  \x1b[32m/version\x1b[0m    version info\n  \x1b[32m/feedback\x1b[0m   report an issue\n\nanything else is sent to the model as a prompt. Ctrl-C during a turn interrupts."
-    );
-}
+
 
 #[allow(dead_code)]
 fn _tool_use_json(t: &ToolUse) -> String {

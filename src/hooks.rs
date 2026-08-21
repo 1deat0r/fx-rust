@@ -151,6 +151,40 @@ pub fn pre_tool_use_input(tool_name: &str, args: &Value, workspace: &Path, sessi
     })
 }
 
+fn base_input(workspace: &Path, session_id: Option<&str>) -> Value {
+    json!({
+        "workspace": workspace.display().to_string(),
+        "session_id": session_id,
+        "cwd": std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
+    })
+}
+
+/// Build the Stop event input (fx: assistant's final message for the turn).
+pub fn stop_input(workspace: &Path, session_id: Option<&str>, assistant_text: &str) -> Value {
+    let mut v = base_input(workspace, session_id);
+    v["assistant_text"] = Value::String(assistant_text.to_string());
+    v
+}
+
+/// Build the PostTurnEnd event input (fx: turn accounting).
+pub fn post_turn_end_input(workspace: &Path, session_id: Option<&str>, steps: usize) -> Value {
+    let mut v = base_input(workspace, session_id);
+    v["steps"] = json!(steps);
+    v
+}
+
+/// Build the AttentionRequired event input (fx: an unresolved permission /
+/// interrupt the user must resolve).
+pub fn attention_required_input(
+    workspace: &Path,
+    session_id: Option<&str>,
+    reason: &str,
+) -> Value {
+    let mut v = base_input(workspace, session_id);
+    v["reason"] = Value::String(reason.to_string());
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

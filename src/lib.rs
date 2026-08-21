@@ -15,12 +15,15 @@ pub mod cli;
 pub mod config;
 pub mod hooks;
 pub mod mcp;
-mod permissions;
+pub mod permissions;
 pub mod providers;
 pub mod sessions;
+pub mod slash_commands;
+pub mod shell_command;
 pub mod tools;
 mod upgrade;
 pub mod ui;
+pub mod usage;
 pub mod util;
 pub mod version;
 
