@@ -84,6 +84,10 @@ fxrs                  # interactive shell in the current workspace
 fxrs ask "explain this repo"
 fxrs resume last      # continue the most recent session
 fxrs sessions         # list sessions
+fxrs session <id>     # show a session
+fxrs usage [24h|7d|30d|all]  # token usage / cost from ~/.fx/usage.jsonl
+fxrs doctor           # environment + config diagnostics
+fxrs replay <id>      # replay a session transcript
 fxrs permissions      # show current permission rules
 fxrs models           # show the resolved model/provider
 ```
