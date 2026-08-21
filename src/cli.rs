@@ -59,27 +59,91 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
             let sessions = store.list(Some(&cfg.workspace))?;
-            if sessions.is_empty() {
+            let wants_json = args.clone().any(|a| a == "--json");
+            if wants_json {
+                let arr: Vec<_> = sessions
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "id": s.id,
+                            "workspace": s.workspace,
+                            "updated_ms": s.updated_ms,
+                            "model": s.model,
+                            "messages": s.messages,
+                            "last_text": s.last_text,
+                            "tokens": s.tokens,
+                            "tool_calls": s.tool_calls,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&arr)?);
+            } else if sessions.is_empty() {
                 println!("no sessions");
-            }
-            for s in sessions {
-                println!("{}\t{}\t{}\t{} msgs\t{}", s.id, s.updated_ms, s.model, s.messages, s.last_text);
+            } else {
+                for s in sessions {
+                    println!("{}\t{}\t{}\t{} msgs\t{}k tok\t{}", s.id, s.updated_ms, s.model, s.messages, s.tokens / 1000, s.last_text);
+                }
             }
             Ok(0)
         }
         Some("session") => {
-            let id = args.next().ok_or_else(|| anyhow::anyhow!("usage: fxrs session <id>"))?.to_string();
+            let mut id = args.next().map(|s| s.to_string());
+            let wants_json = args.clone().any(|a| a == "--json");
+            let wants_delete = args.clone().any(|a| a == "--delete");
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
+            // `session last` / `session latest` resolve via the latest pointer.
+            if id.as_deref().map(|s| s == "last" || s == "latest").unwrap_or(false) {
+                id = store.latest(&cfg.workspace)?.map(|s| s.id);
+            }
+            let id = id.ok_or_else(|| anyhow::anyhow!("usage: fxrs session <id|last> [--json] [--delete]"))?;
+            if wants_delete {
+                match store.delete(&cfg.workspace, &id)? {
+                    true => println!("deleted session {id}"),
+                    false => bail!("no session `{id}`"),
+                }
+                return Ok(0);
+            }
             match store.load(&cfg.workspace, &id)? {
                 Some(sess) => {
-                    println!("id: {}", sess.id);
-                    println!("workspace: {}", sess.workspace);
-                    println!("updated_ms: {}", sess.updated_ms);
-                    println!("model: {}", sess.model);
-                    println!("mode: {:?}", sess.mode);
-                    for m in &sess.messages {
-                        println!("-- {}: {}", m.role_str(), m.last_text().unwrap_or_default());
+                    if wants_json {
+                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                            "id": sess.id,
+                            "workspace": sess.workspace,
+                            "created_ms": sess.created_ms,
+                            "updated_ms": sess.updated_ms,
+                            "model": sess.model,
+                            "mode": sess.mode.to_string(),
+                            "interactive": sess.interactive,
+                            "schema_version": sess.schema_version,
+                            "usage": {
+                                "input_tokens": sess.usage.input_tokens,
+                                "output_tokens": sess.usage.output_tokens,
+                                "total_tokens": sess.usage.total_tokens,
+                                "cost_usd": sess.usage.cost_usd,
+                                "steps": sess.usage.steps,
+                                "tool_calls": sess.usage.tool_calls,
+                            },
+                            "messages": sess.messages.len(),
+                            "grants": sess.grants,
+                        }))?);
+                    } else {
+                        println!("id: {}", sess.id);
+                        println!("workspace: {}", sess.workspace);
+                        println!("updated_ms: {}", sess.updated_ms);
+                        println!("model: {}", sess.model);
+                        println!("mode: {:?}", sess.mode);
+                        println!(
+                            "usage: {}k tokens in / {}k out ({} total) · {} tool calls · ${:.4}",
+                            sess.usage.input_tokens / 1000,
+                            sess.usage.output_tokens / 1000,
+                            sess.usage.total_tokens,
+                            sess.usage.tool_calls,
+                            sess.usage.cost_usd,
+                        );
+                        for m in &sess.messages {
+                            println!("-- {}: {}", m.role_str(), m.last_text().unwrap_or_default());
+                        }
                     }
                 }
                 None => bail!("no session `{id}`"),
@@ -204,11 +268,26 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
         }
         Some("usage") => {
             let mut period = "7d";
-            if let Some(p) = args.clone().next() {
+            let wants_json = args.clone().any(|a| a == "--json");
+            if let Some(p) = args.clone().find(|a| !a.starts_with('-')) {
                 period = p;
             }
             let since = crate::usage::parse_period(period);
             let totals = crate::usage::UsageStore::new().aggregate(since);
+            if wants_json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "period": period,
+                    "turns": totals.turns,
+                    "sessions": totals.sessions.len(),
+                    "input_tokens": totals.input_tokens,
+                    "output_tokens": totals.output_tokens,
+                    "total_tokens": totals.total_tokens,
+                    "tool_calls": totals.tool_calls,
+                    "steps": totals.steps,
+                    "cost_usd": totals.cost_usd,
+                }))?);
+                return Ok(0);
+            }
             println!("fxrs usage (last {period}):");
             println!("  turns: {}", totals.turns);
             println!("  sessions: {}", totals.sessions.len());
@@ -236,6 +315,11 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
                     _ => {}
                 }
             }
+            Ok(0)
+        }
+        Some("settings") => {
+            let cfg = config::resolve(&cwd())?;
+            print!("{}", crate::settings_catalog::render(&cfg));
             Ok(0)
         }
         Some("help") | Some("-h") | Some("--help") => {
@@ -372,6 +456,8 @@ fn show_cli_help() {
          \x1b[32m  fxrs models\x1b[0m             show resolved model / provider\n\
          \x1b[32m  fxrs doctor\x1b[0m            run environment diagnostics\n\
          \x1b[32m  fxrs usage [24h|7d|30d|all]\x1b[0m token usage and cost\n\
+         \x1b[32m  fxrs settings\x1b[0m          show catalog + effective settings\n\
+         \x1b[32m  fxrs session <id> [--json|--delete]\x1b[0m session details\n\
          \x1b[32m  fxrs replay <id>\x1b[0m         replay a session transcript\n\
          \x1b[32m  fxrs setup\x1b[0m              provider configuration guide\n\
          \x1b[32m  fxrs version\x1b[0m            version info\n\

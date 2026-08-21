@@ -12,12 +12,14 @@
 
 pub mod agent;
 pub mod cli;
+pub mod context;
 pub mod config;
 pub mod hooks;
 pub mod mcp;
 pub mod permissions;
 pub mod providers;
 pub mod sessions;
+pub mod settings_catalog;
 pub mod slash_commands;
 pub mod shell_command;
 pub mod tools;

@@ -114,6 +114,8 @@ pub async fn run(
     let mut steps: usize = 0;
     let mut tool_calls: usize = 0;
     let mut total_tokens: u64 = 0;
+    let mut total_input_tokens: u64 = 0;
+    let mut total_output_tokens: u64 = 0;
     let cost_usd: f64 = 0.0;
     let mut finish: FinishReason = FinishReason::Stop;
     let mut error: Option<String> = None;
@@ -135,6 +137,31 @@ pub async fn run(
         if max_steps > 0 && steps >= max_steps {
             finish = FinishReason::MaxSteps;
             break;
+        }
+        // Context accounting: warn at the soft ceiling, stop at the hard one.
+        let ctx_limits = config.context_limits;
+        let estimated_ctx = crate::context::estimate_messages(&transcript);
+        if estimated_ctx > ctx_limits.max_tokens {
+            finish = FinishReason::Error;
+            error = Some(format!(
+                "context limit exceeded (~{}k est. tokens > {}k max); start a new session or resume with a shorter history",
+                estimated_ctx / 1000,
+                ctx_limits.max_tokens / 1000
+            ));
+            eprintln!(
+                "[fxrs] \x1b[33mcontext limit exceeded\x1b[0m: ~{}k est. tokens > limit {}k",
+                estimated_ctx / 1000,
+                ctx_limits.max_tokens / 1000,
+            );
+            break;
+        }
+        if estimated_ctx > ctx_limits.warn_at_tokens {
+            eprintln!(
+                "[fxrs] \x1b[33mwarning\x1b[0m: context ~{}k est. tokens (warn at {}k, hard stop {}k)",
+                estimated_ctx / 1000,
+                ctx_limits.warn_at_tokens / 1000,
+                ctx_limits.max_tokens / 1000,
+            );
         }
         steps += 1;
         human.step_started(steps);
@@ -204,9 +231,11 @@ pub async fn run(
                 }
                 Ok(StreamEvent::Finish) => {}
                 Ok(StreamEvent::Usage { input_tokens, output_tokens }) => {
-                    total_tokens = total_tokens.saturating_add(
-                        input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0),
-                    );
+                    let i = input_tokens.unwrap_or(0);
+                    let o = output_tokens.unwrap_or(0);
+                    total_input_tokens = total_input_tokens.saturating_add(i);
+                    total_output_tokens = total_output_tokens.saturating_add(o);
+                    total_tokens = total_tokens.saturating_add(i + o);
                 }
                 Err(e) => {
                     finish = FinishReason::Error;
@@ -408,6 +437,7 @@ pub async fn run(
 
         // Persist session (grants + transcript) after each model round.
         let sess = Session {
+            schema_version: crate::sessions::SCHEMA_VERSION,
             id: session_id.clone(),
             workspace: config.workspace.display().to_string(),
             created_ms: 0,
@@ -417,6 +447,14 @@ pub async fn run(
             interactive: req.interactive,
             messages: transcript.clone(),
             grants: grants_map.clone(),
+            usage: crate::sessions::SessionUsage {
+                input_tokens: total_input_tokens,
+                output_tokens: total_output_tokens,
+                total_tokens,
+                cost_usd,
+                steps,
+                tool_calls,
+            },
         };
         if let Err(e) = store.save(&sess) {
             eprintln!("[fxrs] session save failed: {e:#}");
@@ -424,6 +462,7 @@ pub async fn run(
     }
 
     let sess = Session {
+        schema_version: crate::sessions::SCHEMA_VERSION,
         id: session_id.clone(),
         workspace: config.workspace.display().to_string(),
         created_ms: 0,
@@ -433,6 +472,14 @@ pub async fn run(
         interactive: req.interactive,
         messages: transcript.clone(),
         grants: grants_map.clone(),
+        usage: crate::sessions::SessionUsage {
+            input_tokens: total_input_tokens,
+            output_tokens: total_output_tokens,
+            total_tokens,
+            cost_usd,
+            steps,
+            tool_calls,
+        },
     };
     if let Err(e) = store.save(&sess) {
         eprintln!("[fxrs] session save failed: {e:#}");
@@ -446,8 +493,8 @@ pub async fn run(
             workspace: config.workspace.display().to_string(),
             session_id: session_id.clone(),
             model: provider.model.clone(),
-            input_tokens: 0,
-            output_tokens: total_tokens,
+            input_tokens: total_input_tokens,
+            output_tokens: total_output_tokens,
             total_tokens,
             cost_usd,
             steps,

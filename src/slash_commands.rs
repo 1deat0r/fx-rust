@@ -4,6 +4,7 @@
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Slash {
+    Settings,
     Help,
     Exit,
     Clear,
@@ -53,6 +54,7 @@ pub fn catalog() -> &'static [Spec] {
         Spec { name: "resume", aliases: &["r"], usage: "/resume [last|<id>]", description: "resume a session", ready: true },
         Spec { name: "usage", aliases: &["credits"], usage: "/usage [24h|7d|30d|all]", description: "token usage / cost summary", ready: true },
         Spec { name: "doctor", aliases: &[], usage: "/doctor", description: "run config + environment diagnostics", ready: true },
+        Spec { name: "settings", aliases: &[], usage: "/settings", description: "show config catalog + effective settings", ready: true },
         Spec { name: "setup", aliases: &[], usage: "/setup", description: "provider configuration guide", ready: true },
         Spec { name: "trace", aliases: &[], usage: "/trace", description: "toggle tool-call tracing", ready: true },
         Spec { name: "feedback", aliases: &[], usage: "/feedback", description: "report an issue", ready: true },
@@ -81,6 +83,7 @@ pub fn parse(line: &str) -> Option<Slash> {
         None => (rest.to_ascii_lowercase(), None),
     };
     let dispatch = |canonical: &str| match canonical {
+        "settings" => Slash::Settings,
         "help" => Slash::Help,
         "exit" | "quit" | "q" => Slash::Exit,
         "clear" | "cls" => Slash::Clear,

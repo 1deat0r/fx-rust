@@ -176,6 +176,10 @@ pub async fn run_interactive(
         if let Some(cmd) = crate::slash_commands::parse(trimmed) {
             use crate::slash_commands::Slash;
             match cmd {
+                Slash::Settings => {
+                    print!("{}", crate::settings_catalog::render(&config));
+                    continue;
+                }
                 Slash::Exit => break,
                 Slash::Help => {
                     println!("{}", crate::slash_commands::render_help());

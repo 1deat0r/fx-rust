@@ -339,6 +339,10 @@ mod tests {
             settings_path: None,
             additional_directories: Vec::new(),
             mcp_servers: Vec::new(),
+            context_limits: crate::context::ContextLimits::default(),
+            input_appearance: "auto".into(),
+            presentation_mode: "default".into(),
+            update_channel: "stable".into(),
         };
         let p = resolve_provider(&cfg).unwrap();
         assert_eq!(p.provider, ProviderKind::OpenAi);

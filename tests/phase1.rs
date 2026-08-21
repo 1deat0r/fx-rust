@@ -56,6 +56,7 @@ fn cli_doctor_reports_missing_endpoint() {
     assert!(!out.status.success(), "doctor should fail with no endpoint");
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("FAIL"), "expected FAIL in doctor output: {text}");
+    std::env::remove_var("FX_HOME");
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -95,4 +96,102 @@ fn slash_router_and_shell_classifier_integration() {
         workspace: std::path::Path::new("/ws"),
     };
     assert_eq!(auto_classify(&req, &s), AutoDecision::Allow);
+}
+
+#[test]
+fn cli_settings_renders_catalog_with_fx_home() {
+    let home = temp_home("settings");
+    let ws = temp_home("ws-settings");
+    let out = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["settings"])
+        .output()
+        .expect("fxrs settings runs");
+    assert!(out.status.success(), "settings exited {:?}", out.status);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("model"), "catalog missing model: {text}");
+    assert!(text.contains("permission_mode"), "catalog missing permission_mode: {text}");
+    assert!(text.contains("mcpServers"), "catalog missing mcpServers: {text}");
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn cli_session_json_lifecycle() {
+    let home = temp_home("session-json");
+    let ws = temp_home("ws-session-json");
+    // Isolate the parent-process store too, so saves land in FX_HOME.
+    std::env::set_var("FX_HOME", &home);
+    // Build a session through sessions API against FX_HOME.
+    let store = fxrs::sessions::SessionStore::new().unwrap();
+    let sess = fxrs::sessions::Session {
+        schema_version: fxrs::sessions::SCHEMA_VERSION,
+        id: "stest-1".into(),
+        workspace: ws.display().to_string(),
+        created_ms: 1,
+        updated_ms: 2,
+        model: "m".into(),
+        mode: fxrs::permissions::PermissionMode::Auto,
+        interactive: false,
+        messages: vec![fxrs::providers::Message::user("hello")],
+        grants: Default::default(),
+        usage: fxrs::sessions::SessionUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            total_tokens: 15,
+            cost_usd: 0.0,
+            steps: 2,
+            tool_calls: 1,
+        },
+    };
+    store.save(&sess).unwrap();
+
+    let out = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["session", "stest-1", "--json"])
+        .output()
+        .expect("fxrs session --json runs");
+    assert!(out.status.success(), "session --json exited {:?}", out.status);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&text).expect("session --json output parses");
+    assert_eq!(parsed["id"], "stest-1");
+    assert_eq!(parsed["usage"]["total_tokens"], 15);
+    assert_eq!(parsed["schema_version"], 2);
+
+    // sessions --json lists it
+    let out2 = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let arr: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out2.stdout)).unwrap();
+    assert_eq!(arr.as_array().map(|a| a.len()), Some(1));
+
+    // delete
+    let out3 = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["session", "stest-1", "--delete"])
+        .output()
+        .unwrap();
+    assert!(out3.status.success());
+    assert!(String::from_utf8_lossy(&out3.stdout).contains("deleted"));
+
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&ws);
 }

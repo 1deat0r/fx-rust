@@ -28,6 +28,9 @@ pub struct SettingsFile {
     pub first_call_tool_choice: Option<String>,
     pub context: Option<bool>,
     pub sandbox: Option<String>,
+    pub input_appearance: Option<String>,
+    pub presentation_mode: Option<String>,
+    pub update_channel: Option<String>,
     pub permission: Option<BTreeMap<String, serde_json::Value>>,
     pub workspaces: Option<BTreeMap<String, WorkspaceFile>>,
     #[serde(default, rename = "mcpServers", alias = "mcp_servers")]
@@ -38,6 +41,9 @@ pub struct SettingsFile {
 #[serde(default)]
 pub struct WorkspaceFile {
     pub sandbox: Option<String>,
+    pub input_appearance: Option<String>,
+    pub presentation_mode: Option<String>,
+    pub update_channel: Option<String>,
     pub permission: Option<BTreeMap<String, serde_json::Value>>,
     pub additional_directories: Option<Vec<String>>,
     #[serde(default, rename = "mcpServers", alias = "mcp_servers")]
@@ -107,6 +113,14 @@ pub struct Config {
     pub additional_directories: Vec<PathBuf>,
     /// Merged MCP servers (workspace layer wins by name).
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Context accounting limits (warn / hard stop, in estimated tokens).
+    pub context_limits: crate::context::ContextLimits,
+    /// Input styling hint (`auto` | `light` | `dark`).
+    pub input_appearance: String,
+    /// Presentation mode (`default` | `full`).
+    pub presentation_mode: String,
+    /// Upgrade channel (`stable` | `beta`).
+    pub update_channel: String,
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -226,6 +240,16 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         _ => SandboxMode::None,
     };
 
+    let input_appearance = std::env::var("FX_INPUT_APPEARANCE").ok().flatten_nonempty()
+        .or(settings.input_appearance)
+        .unwrap_or_else(|| "auto".to_string());
+    let presentation_mode = std::env::var("FX_PRESENTATION_MODE").ok().flatten_nonempty()
+        .or(settings.presentation_mode)
+        .unwrap_or_else(|| "default".to_string());
+    let update_channel = std::env::var("FX_UPDATE_CHANNEL").ok().flatten_nonempty()
+        .or(settings.update_channel)
+        .unwrap_or_else(|| "stable".to_string());
+
     // ---- permission rules: merge global settings, then workspace overrides ----
     let mut permission_rules: BTreeMap<String, ToolRule> = BTreeMap::new();
     if let Some(map) = &settings.permission {
@@ -273,6 +297,10 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         permission_rules,
         settings_path: Some(settings_path()),
         additional_directories,
+        context_limits: crate::context::ContextLimits::from_env(),
+        input_appearance,
+        presentation_mode,
+        update_channel,
         mcp_servers: merge_mcp_servers(
             &merge_mcp_servers(&settings.mcp_servers, &ws_entry.mcp_servers),
             &project.mcp_servers,

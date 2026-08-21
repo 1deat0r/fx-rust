@@ -26,7 +26,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Permission gates ask/auto/yolo + glob rules + session grants | 🟡 | `src/permissions.rs`; sandbox + deterministic auto-classifier landed (P1); approval flows pending |
 | Providers: gateway/OpenAI-compatible + Anthropic + SSE | 🟡 | `src/providers/`; missing model catalog/capabilities, context limits |
 | Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; auto mode now runs sandbox+classifier first, model reviewer on undetermined (P1) |
-| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1) |
+| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1); **codec v2 + migration, latest pointer, per-session usage, delete, JSON output landed (P1)** |
 | Hooks (4 lifecycle events + full input builders) | 🟡 | `src/hooks.rs`; upstream has full definitions/prompt/runtime/tool |
 | MCP stdio JSON-RPC | 🟡 | `src/mcp.rs`; stdio only |
 | Toolkit | 🟡 | 21+ tools; see tool matrix |
@@ -36,8 +36,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Minimal subagent | 🟡 | depth-capped single tool; upstream is a 21-file subsystem |
 | **Shell-command lexer + classifier/effect** | ✅ | **P1 — `src/shell_command.rs`** (quotes/heredocs/assignments, class + writes/network/destructive) |
 | **Permission sandbox + auto-classifier** | ✅ | **P1 — `src/permissions.rs`** (`Sandbox`, `auto_classify`; deterministic fast path in auto mode) |
-| **Usage store (`~/.fx/usage.jsonl`) + CLI** | ✅ | **P1 — `src/usage.rs`** (append-only records, `--period`, `fxrs usage`) |
-| **Slash-command router + catalog** | ✅ | **P1 — `src/slash_commands.rs`** (upstream tokens routed; wired into shell) |
+| **Usage store (`~/.fx/usage.jsonl`) + CLI** | ✅ | **P1 — `src/usage.rs`** (append-only records, `--period`, `fxrs usage [--json]`) |
+| **Slash-command router + catalog** | ✅ | **P1 — `src/slash_commands.rs`** (upstream tokens routed; wired into shell; `/settings` added) |
 
 ### Not yet ported (upstream surface → fxrs gap)
 | Subsystem | Upstream refs | Notes |
@@ -52,8 +52,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Full subagent system | `core/subagent/*` (21 files) + `ui/subagent/*` | domain, execution, manager, authority, approvals, communication, tool host, ui projection |
 | Background execution | `core/background/*`, `core/execution/*`, `tools/shell/background_process.zig` | background store/launch/restore/supervisor, process tree, local + devbox executors, command environment |
 | Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | native/tmux/browser sessions, shell resolver, recovery, takeover |
-| Sessions full | `core/session/*` (40 files) | store types/paths, codec, catalog, discovery, replay, migration, usage sidecars, prompt history, result store, artifacts |
-| Config catalog | `core/config/settings_catalog.zig`, `settings_store.zig`, `context_limits.zig`, `input_appearance.zig`, `presentation_mode.zig` | settings schema + catalog |
+| Sessions full | `core/session/*` (40 files) | codec v2 + migration + latest pointer + usage sidecar-in-session landed (P1); catalog/discovery/replay/session commands partial; prompt history, result store, artifacts pending |
+| Config catalog | `core/config/settings_catalog.zig`, `settings_store.zig`, `context_limits.zig`, `input_appearance.zig`, `presentation_mode.zig` | ✅ settings catalog + context limits landed (P1): `src/settings_catalog.rs`, `src/context.rs`, resolved in config + `fxrs settings`/`/settings` |
 | Permissions full | `core/permissions/*` (13 files) | sandbox + deterministic auto-classifier landed (P1); command admission, approval flow (model reviewer exists), direct command pending |
 | Slash commands | `core/slash_commands/*`, `builtins/commands.zig` | router + catalog landed (P1): help/exit/clear/version/status/model/permissions/sessions/session/resume/usage/doctor/setup/trace/feedback/workspace; compact/login/logout routed as not-ready |
 | Modes & mods | `core/modes/*`, `core/mods/*`, `builtins/modes.zig` | mode contract + registry |
@@ -96,7 +96,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 ## Phased plan
 
 - **Phase 0 — Mandate + scaffolding (this commit).** ROADMAP, parity matrix, README correction, memory.
-- **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders. Remaining: full session store (codec/catalog/discovery/migration), config catalog/context limits, approval-flow polish, full agent runtime (worker/execution memory/tool preparation), web tooling full set, full hooks definitions.
+- **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders, ✅ session codec v2 + migration + latest pointer + per-session usage + delete, ✅ settings catalog + context limits (+ context guard in agent loop). Remaining: full session catalog/discovery/replay, approval-flow polish, full agent runtime (worker/execution memory/tool preparation), web tooling full set, full hooks definitions.
 - **Phase 2 — Protocols & auth.** Full MCP (streamable HTTP, legacy SSE, elicitation, auth, negotiation, json-schema), auth/login (OAuth + keychain), gateway model catalog/capabilities, context limits, prompt history.
 - **Phase 3 — Execution & terminal.** Background store/supervisor, process tree, local + devbox executors, terminal integration (native/tmux/browser), terminal + background_process tools.
 - **Phase 4 — Subagent & modes.** Full subagent subsystem + UI, modes/mods registries.
