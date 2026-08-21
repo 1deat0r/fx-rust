@@ -91,6 +91,7 @@ fxrs usage [24h|7d|30d|all]  # token usage / cost from ~/.fx/usage.jsonl
 fxrs settings         # settings catalog + effective values
 fxrs doctor           # environment + config diagnostics
 fxrs replay <id>      # replay a session transcript
+fxrs replay tape <id> # replay the JSONL tool-call tape of a session
 fxrs session <id|last> [--json|--delete]  # session details / JSON / delete
 fxrs permissions      # show current permission rules
 fxrs models           # show the resolved model/provider

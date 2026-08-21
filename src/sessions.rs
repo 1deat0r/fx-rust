@@ -57,12 +57,24 @@ pub struct Session {
 pub struct SessionSummary {
     pub id: String,
     pub workspace: String,
+    /// Directory name (`~/project`) shown in listings.
+    pub workspace_name: String,
+    pub created_ms: u128,
     pub updated_ms: u128,
+    pub duration_ms: u128,
     pub model: String,
     pub messages: usize,
+    pub role_counts: RoleCounts,
     pub last_text: String,
     pub tokens: u64,
     pub tool_calls: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleCounts {
+    pub user: usize,
+    pub assistant: usize,
+    pub tool: usize,
 }
 
 #[derive(Clone)]
@@ -81,7 +93,7 @@ impl SessionStore {
         &self.root
     }
 
-    fn dir_for(&self, workspace: &Path) -> PathBuf {
+    pub(crate) fn dir_for(&self, workspace: &Path) -> PathBuf {
         // Sanitize workspace path into a directory name: absolute paths become
         // `ws-<hash of canonical path>` to keep it filesystem-safe.
         let canon = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
@@ -239,12 +251,25 @@ impl SessionStore {
                             .chars()
                             .take(80)
                             .collect();
+                        let mut roles = RoleCounts::default();
+                        for m in &sess.messages {
+                            match m.role_str() {
+                                "user" => roles.user += 1,
+                                "assistant" => roles.assistant += 1,
+                                "tool" => roles.tool += 1,
+                                _ => {}
+                            }
+                        }
                         out.push(SessionSummary {
                             id: sess.id,
-                            workspace: sess.workspace,
+                            workspace: sess.workspace.clone(),
+                            workspace_name: workspace_name(&sess.workspace),
+                            created_ms: sess.created_ms,
                             updated_ms: sess.updated_ms,
+                            duration_ms: sess.updated_ms.saturating_sub(sess.created_ms),
                             model: sess.model,
                             messages: sess.messages.len(),
+                            role_counts: roles,
                             last_text,
                             tokens: sess.usage.total_tokens,
                             tool_calls: sess.usage.tool_calls,
@@ -281,6 +306,15 @@ impl SessionStore {
         std::fs::remove_dir_all(&dir)?;
         Ok(n)
     }
+}
+
+pub fn workspace_name(workspace: &str) -> String {
+    let trimmed = workspace.trim_end_matches('/');
+    trimmed
+        .rsplit('/')
+        .next()
+        .unwrap_or(workspace)
+        .to_string()
 }
 
 fn simple_hash(s: &str) -> String {

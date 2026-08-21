@@ -195,3 +195,70 @@ fn cli_session_json_lifecycle() {
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn cli_replay_tape_and_sessions_search() {
+    let home = temp_home("tape");
+    let ws = temp_home("ws-tape");
+    std::env::set_var("FX_HOME", &home);
+
+    // Create a session + tape through the public API.
+    let store = fxrs::sessions::SessionStore::new().unwrap();
+    let sess = fxrs::sessions::Session {
+        schema_version: fxrs::sessions::SCHEMA_VERSION,
+        id: "tape-sess".into(),
+        workspace: ws.display().to_string(),
+        created_ms: 1,
+        updated_ms: 2,
+        model: "m".into(),
+        mode: fxrs::permissions::PermissionMode::Auto,
+        interactive: false,
+        messages: vec![fxrs::providers::Message::user("hello")],
+        grants: Default::default(),
+        usage: Default::default(),
+    };
+    store.save(&sess).unwrap();
+    let tape = fxrs::tape::TapeStore::for_session(&ws, "tape-sess");
+    tape.record(
+        &fxrs::tape::TapeEntry {
+            ts_ms: fxrs::util::now_ms(),
+            tool: "run_command".into(),
+            target: "git status".into(),
+            ok: true,
+            preview: "ok".into(),
+        },
+        "tape-sess",
+    );
+
+    let out = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["replay", "tape", "tape-sess"])
+        .output()
+        .expect("replay tape runs");
+    assert!(out.status.success(), "replay tape exited {:?}", out.status);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("run_command"), "tape shows tool: {text}");
+    assert!(text.contains("git status"), "tape shows target: {text}");
+    assert!(text.contains("1 tape entries"), "tape count: {text}");
+
+    // sessions --search filters by last_text.
+    let out2 = Command::new(fx_bin())
+        .env_clear()
+        .env("FX_HOME", &home)
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .current_dir(&ws)
+        .args(["sessions", "--search", "hello"])
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+    assert!(String::from_utf8_lossy(&out2.stdout).contains("tape-sess"));
+
+    std::env::remove_var("FX_HOME");
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&ws);
+}

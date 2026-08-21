@@ -22,13 +22,13 @@ pub trait Human: Send + Sync {
     fn stream_done(&self) {}
     fn trace_tool(&self, _name: String) {}
     fn tool_result(&self, _name: &str, _result: &str) {}
-    fn approve(&self, tool_name: String, target: String, args: String) -> bool;
+    fn approve(&self, req: &crate::approval::ApprovalRequest) -> bool;
 }
 
 /// Drops output entirely (used for non-interactive / background runs).
 pub struct QuietHuman;
 impl Human for QuietHuman {
-    fn approve(&self, _tool: String, _target: String, _args: String) -> bool {
+    fn approve(&self, _req: &crate::approval::ApprovalRequest) -> bool {
         false
     }
 }
@@ -99,15 +99,14 @@ impl Human for InteractiveHuman {
         let _ = set_title("fxrs");
     }
 
-    fn approve(&self, tool_name: String, target: String, args: String) -> bool {
+    fn approve(&self, req: &crate::approval::ApprovalRequest) -> bool {
         if self.quiet {
             return false;
         }
+        eprintln!("{}", req.prompt());
         let mut line = String::new();
         loop {
-            eprint!(
-                "\x1b[33mƒ {tool_name}\x1b[0m \x1b[90m{target}\x1b[0m\n  allow? \x1b[1m(y)\x1b[0mes / \x1b[1m(n)\x1b[0mo / \x1b[1m(a)\x1b[0mllow always for this scope\x1b[0m: "
-            );
+            eprint!("  allow? \x1b[1m(y)\x1b[0mes / \x1b[1m(n)\x1b[0mo / \x1b[1m(a)\x1b[0mllow always for this scope\x1b[0m: ");
             let _ = std::io::stderr().flush();
             line.clear();
             let mut buf = String::new();
@@ -119,7 +118,7 @@ impl Human for InteractiveHuman {
                 "y" | "yes" => return true,
                 "a" | "always" => return true,
                 "n" | "no" => {
-                    self.trace_line(&format!("denied {tool_name} {args}"));
+                    self.trace_line(&format!("denied {} {}", req.tool_name, req.target));
                     return false;
                 }
                 _ => continue,

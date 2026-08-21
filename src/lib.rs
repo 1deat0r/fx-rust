@@ -11,6 +11,7 @@
 //! Rust implementation, not a translation of the Zig sources.
 
 pub mod agent;
+pub mod approval;
 pub mod cli;
 pub mod context;
 pub mod config;
@@ -20,6 +21,7 @@ pub mod mcp;
 pub mod permissions;
 pub mod providers;
 pub mod sessions;
+pub mod tape;
 pub mod settings_catalog;
 pub mod slash_commands;
 pub mod shell_command;

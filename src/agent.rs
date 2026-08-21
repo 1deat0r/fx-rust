@@ -136,6 +136,8 @@ pub async fn run(
     // Execution memory: a bounded record of executed tool calls, replayed
     // into the system prompt each round (fx execution_memory).
     let mut exec_memory = crate::exec_memory::ExecMemory::default();
+    // Replay tape: per-session JSONL of every executed tool call.
+    let tape = crate::tape::TapeStore::for_session(&config.workspace, &session_id);
 
     loop {
         if max_steps > 0 && steps >= max_steps {
@@ -399,7 +401,23 @@ pub async fn run(
                     Decision::Unresolved => match config.permission_mode {
                         PermissionMode::Yolo => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
                         PermissionMode::Ask if req.interactive => {
-                            let allowed = human.approve(call.name.clone(), target.clone(), call.arguments.clone());
+                            let approval_req = crate::approval::ApprovalRequest {
+                                tool_name: call.name.clone(),
+                                target: target.clone(),
+                                input_text: call.arguments.clone(),
+                                workspace: config.workspace.clone(),
+                            };
+                            crate::hooks::run(
+                                crate::hooks::HookKind::AttentionRequired,
+                                crate::hooks::attention_required_input(
+                                    &config.workspace,
+                                    Some(&session_id),
+                                    "permission approval needed",
+                                ),
+                                &config.workspace,
+                                30,
+                            );
+                            let allowed = human.approve(&approval_req);
                             if allowed {
                                 let pattern = grant_pattern(&target);
                                 grants_map.insert(call.name.clone(), pattern.clone());
@@ -439,11 +457,22 @@ pub async fn run(
             let result_text = result.unwrap_or_else(tools::err_result);
             human.tool_result(&call.name, &result_text.to_string());
             let result_str = result_text.to_string();
+            let result_ok = !result_str.contains("\"error\"");
             exec_memory.record(
                 &call.name,
                 &prepared_args_debug(&call),
                 &result_str,
-                !result_str.contains("\"error\""),
+                result_ok,
+            );
+            tape.record(
+                &crate::tape::TapeEntry {
+                    ts_ms: crate::util::now_ms(),
+                    tool: call.name.clone(),
+                    target,
+                    ok: result_ok,
+                    preview: result_str.chars().take(400).collect(),
+                },
+                &session_id,
             );
             if call.name == "view_image" {
                 let args: serde_json::Value =

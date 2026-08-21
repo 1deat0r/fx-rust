@@ -80,8 +80,28 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             } else if sessions.is_empty() {
                 println!("no sessions");
             } else {
-                for s in sessions {
-                    println!("{}\t{}\t{}\t{} msgs\t{}k tok\t{}", s.id, s.updated_ms, s.model, s.messages, s.tokens / 1000, s.last_text);
+                let mut iter: Vec<_> = sessions;
+                if let Some(term) = args.clone().find(|a| a.as_str() == "--search").and_then(|_| {
+                    args.clone().skip_while(|a| a.as_str() != "--search").nth(1)
+                }) {
+                    let q = term.to_lowercase();
+                    iter.retain(|s| {
+                        s.id.to_lowercase().contains(&q)
+                            || s.model.to_lowercase().contains(&q)
+                            || s.last_text.to_lowercase().contains(&q)
+                    });
+                }
+                for s in iter {
+                    println!(
+                        "{}\t{}\t{}\t{} msgs\t{}k tok\t{}s\t{}",
+                        s.id,
+                        s.updated_ms,
+                        s.model,
+                        s.messages,
+                        s.tokens / 1000,
+                        s.duration_ms / 1000,
+                        s.last_text,
+                    );
                 }
             }
             Ok(0)
@@ -130,9 +150,12 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                     } else {
                         println!("id: {}", sess.id);
                         println!("workspace: {}", sess.workspace);
+                        println!("created: {} ({}s duration)", sess.created_ms, sess.updated_ms.saturating_sub(sess.created_ms) / 1000);
                         println!("updated_ms: {}", sess.updated_ms);
                         println!("model: {}", sess.model);
                         println!("mode: {:?}", sess.mode);
+                        println!("interactive: {}", sess.interactive);
+                        println!("schema_version: {}", sess.schema_version);
                         println!(
                             "usage: {}k tokens in / {}k out ({} total) · {} tool calls · ${:.4}",
                             sess.usage.input_tokens / 1000,
@@ -300,12 +323,33 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             Ok(0)
         }
         Some("replay") => {
-            let id = args.next().map(|s| s.to_string()).unwrap_or_default();
+            let tape_mode = args.clone().any(|a| a == "tape");
+            let id = args
+                .clone()
+                .find(|a| a.as_str() != "tape")
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if id.is_empty() {
-                bail!("usage: fxrs replay <session-id>");
+                bail!("usage: fxrs replay <session-id> | replay tape <session-id>");
             }
             let cfg = config::resolve(&cwd())?;
             let store = SessionStore::new()?;
+            if tape_mode {
+                let tstore = crate::tape::TapeStore::for_session(&cfg.workspace, &id);
+                let entries = tstore.read(&id);
+                if entries.is_empty() {
+                    println!("no tape for session `{id}` (no tool calls recorded?)");
+                }
+                for e in &entries {
+                    let mark = if e.ok { "ok" } else { "ERR" };
+                    println!("{}\t{}\t{mark}\t{}", e.ts_ms, e.tool, e.target);
+                    if !e.preview.is_empty() {
+                        println!("    {}", shade_line(&e.preview));
+                    }
+                }
+                println!("({} tape entries)", entries.len());
+                return Ok(0);
+            }
             let sess = store.load_or_error(&cfg.workspace, &id)?;
             for m in &sess.messages {
                 match m.role_str() {
