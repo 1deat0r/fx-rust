@@ -11,8 +11,10 @@
 
 pub mod bash;
 pub mod filesystem;
+pub mod html;
 pub mod memory;
 pub mod question;
+pub mod search;
 pub mod skill;
 pub mod subagent;
 pub mod vision;
@@ -71,6 +73,7 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
             s("file_path").or_else(|| s("path")).or_else(|| s("folder_path"))
         }
         "glob_files" | "grep_files" | "list_files" => s("pattern").or_else(|| s("path")),
+        "semantic_search" => s("query"),
         n if n.starts_with("mcp__") => Some(n.to_string()),
         "subagent" => Some("subagent".to_string()),
         _ => s("path").or_else(|| s("url")).or_else(|| s("query")),
@@ -101,6 +104,7 @@ pub async fn execute(
         "memory" => memory::memory(ctx, args),
         "web_fetch" => web::web_fetch(ctx, args).await,
         "web_search" => web::web_search(ctx, args).await,
+        "semantic_search" => search::semantic_search(ctx, args),
         "ask_user_question" => question::ask_user_question(ctx, args),
         "skill" => skill::skill(ctx, args),
         "install_skill" => skill::install_skill(ctx, args),
@@ -137,7 +141,7 @@ pub async fn execute(
     }
 }
 
-fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+pub fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
 }
 
@@ -413,6 +417,21 @@ pub fn schemas() -> Vec<Value> {
                 "parameters": {
                     "type": "object",
                     "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "semantic_search",
+                "description": "Ranked keyword search over text files in the workspace (BM25-lite). Use to locate code/docs by concept before reading files.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "search terms, e.g. \"database connection pool\""},
+                        "max_results": {"type": "number", "description": "1-10 results (default 5)"}
+                    },
                     "required": ["query"]
                 }
             }

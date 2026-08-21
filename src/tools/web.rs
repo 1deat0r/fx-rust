@@ -9,12 +9,47 @@ use super::{ToolContext, arg};
 
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
+/// URL policy (fx `tools/web/url_policy.zig`): only http/https, and by
+/// default loopback + private ranges are refused (SSRF guard). Set
+/// `FX_ALLOW_LOCAL_URLS=1` to permit localhost/intranet fetches.
 fn valid_url(url: &str) -> Result<reqwest::Url> {
     let u = reqwest::Url::parse(url).with_context(|| format!("invalid url `{url}`"))?;
     match u.scheme() {
-        "http" | "https" => Ok(u),
+        "http" | "https" => {}
         other => bail!("unsupported url scheme `{other}` (only http/https)"),
     }
+    if std::env::var("FX_ALLOW_LOCAL_URLS").map(|v| v == "1").unwrap_or(false) {
+        return Ok(u);
+    }
+    if let Some(host) = u.host_str() {
+        let is_local = host.eq_ignore_ascii_case("localhost")
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host.ends_with(".local")
+            || is_private_ip(host);
+        if is_local {
+            bail!("refusing local/private url `{url}` (set FX_ALLOW_LOCAL_URLS=1 to allow)");
+        }
+    }
+    Ok(u)
+}
+
+/// Cheap private-range check for dotted-quad IPv4 (RFC1918 + link-local).
+fn is_private_ip(host: &str) -> bool {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut oct = [0u32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        oct[i] = p.parse::<u32>().ok().unwrap_or(299);
+    }
+    oct[0] == 10
+        || (oct[0] == 172 && (16..=31).contains(&oct[1]))
+        || (oct[0] == 192 && oct[1] == 168)
+        || (oct[0] == 169 && oct[1] == 254)
+        || (oct[0] == 127)
+        || oct[0] == 0
 }
 
 fn textify(html: &str) -> String {
@@ -266,4 +301,49 @@ fn strip_tags(s: &str) -> String {
         }
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has(url: &str) -> bool {
+        valid_url(url).is_ok()
+    }
+
+    #[test]
+    fn url_policy_allows_public_https() {
+        assert!(has("https://example.com/page"));
+        assert!(has("http://example.com"));
+        assert!(!has("ftp://example.com"));
+        assert!(!has("file:///etc/passwd"));
+        assert!(!has("not a url"));
+    }
+
+    #[test]
+    fn url_policy_blocks_local_and_private() {
+        assert!(!has("http://localhost:8080"));
+        assert!(!has("http://127.0.0.1/x"));
+        assert!(!has("http://192.168.1.1"));
+        assert!(!has("http://10.0.0.5"));
+        assert!(!has("http://172.16.0.1"));
+        assert!(!has("http://169.254.169.254/latest/meta-data"));
+        assert!(!has("http://myhost.local"));
+    }
+
+    #[test]
+    fn url_policy_allow_local_env_override() {
+        std::env::set_var("FX_ALLOW_LOCAL_URLS", "1");
+        assert!(has("http://localhost:8080"));
+        std::env::remove_var("FX_ALLOW_LOCAL_URLS");
+    }
+
+    #[test]
+    fn private_ip_helpers() {
+        assert!(is_private_ip("10.1.2.3"));
+        assert!(is_private_ip("192.168.0.1"));
+        assert!(is_private_ip("172.16.5.5"));
+        assert!(!is_private_ip("8.8.8.8"));
+        assert!(!is_private_ip("not-an-ip"));
+    }
 }

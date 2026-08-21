@@ -133,6 +133,10 @@ pub async fn run(
     // Publish connected MCP server tools to the model (once per agent run).
     let mcp_tools = crate::mcp::list_all_tools(&config.mcp_servers);
 
+    // Execution memory: a bounded record of executed tool calls, replayed
+    // into the system prompt each round (fx execution_memory).
+    let mut exec_memory = crate::exec_memory::ExecMemory::default();
+
     loop {
         if max_steps > 0 && steps >= max_steps {
             finish = FinishReason::MaxSteps;
@@ -173,6 +177,10 @@ pub async fn run(
         } else {
             Some(tools::schemas_with_mcp(&mcp_tools))
         };
+        if !exec_memory.is_empty() {
+            system.push_str("\n");
+            system.push_str(&exec_memory.snapshot());
+        }
         let mut stream = providers::stream(
             &provider,
             &transcript,
@@ -371,20 +379,32 @@ pub async fn run(
                 } else {
                     call.clone()
                 };
-                let r = match decision {
-                    Decision::Allow => execute_tool(&ctx, &effective_call).await,
+                // Tool preparation (fx tool_preparation): normalize paths +
+                // enforce required fields before anything executes.
+                let prepared_args: Value =
+                    serde_json::from_str(&effective_call.arguments).unwrap_or(Value::Null);
+                let prepared = crate::tool_prep::prepare(
+                    &call.name,
+                    &prepared_args,
+                    &ctx,
+                );
+                let r = if let Some(prep_err) = prepared.error {
+                    Ok(tools::err_json(format!("{}: {prep_err}", call.name)))
+                } else {
+                    match decision {
+                    Decision::Allow => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
                     Decision::Deny(reason) => {
                         Ok(tools::err_json(format!("{name}: blocked by permission rules: {reason}", name = call.name)))
                     }
                     Decision::Unresolved => match config.permission_mode {
-                        PermissionMode::Yolo => execute_tool(&ctx, &effective_call).await,
+                        PermissionMode::Yolo => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
                         PermissionMode::Ask if req.interactive => {
                             let allowed = human.approve(call.name.clone(), target.clone(), call.arguments.clone());
                             if allowed {
                                 let pattern = grant_pattern(&target);
                                 grants_map.insert(call.name.clone(), pattern.clone());
                                 permissions.grants.allow(&call.name, &pattern);
-                                execute_tool(&ctx, &effective_call).await
+                                execute_tool_prepared(&ctx, &effective_call, &prepared).await
                             } else {
                                 Ok(tools::err_json(format!("{}: denied by user", call.name)))
                             }
@@ -401,7 +421,7 @@ pub async fn run(
                                 input_text: call.arguments.clone(),
                                 workspace: &config.workspace,
                             }, &sandbox) {
-                                AutoDecision::Allow => execute_tool(&ctx, &effective_call).await,
+                                AutoDecision::Allow => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
                                 AutoDecision::Deny(reason) => Ok(tools::err_json(format!(
                                     "{}: not auto-approved: {}",
                                     call.name, reason
@@ -412,11 +432,19 @@ pub async fn run(
                             }
                         }
                     },
+                    }
                 };
                 r
             };
             let result_text = result.unwrap_or_else(tools::err_result);
             human.tool_result(&call.name, &result_text.to_string());
+            let result_str = result_text.to_string();
+            exec_memory.record(
+                &call.name,
+                &prepared_args_debug(&call),
+                &result_str,
+                !result_str.contains("\"error\""),
+            );
             if call.name == "view_image" {
                 let args: serde_json::Value =
                     serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
@@ -529,10 +557,35 @@ fn provider_max_tokens(p: &ProviderConfig) -> u32 {
     }
 }
 
+fn prepared_args_debug(call: &ToolUse) -> serde_json::Value {
+    serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null)
+}
+
 async fn execute_tool(ctx: &ToolContext, call: &ToolUse) -> Result<serde_json::Value> {
     let args: serde_json::Value =
         serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
     tools::execute(ctx, &call.name, &args).await
+}
+
+/// Execute a tool call using tool-prep-normalized arguments (absolute paths,
+/// defaults applied) when they differ from the raw arguments.
+async fn execute_tool_prepared(
+    ctx: &ToolContext,
+    call: &ToolUse,
+    prepared: &crate::tool_prep::Prepared,
+) -> Result<serde_json::Value> {
+    let raw: serde_json::Value =
+        serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+    if prepared.args == raw {
+        return execute_tool(ctx, call).await;
+    }
+    let final_call = ToolUse {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: serde_json::to_string(&prepared.args)
+            .unwrap_or_else(|_| call.arguments.clone()),
+    };
+    execute_tool(ctx, &final_call).await
 }
 
 /// Auto-review: unresolved sensitive call → same-provider reviewer request.

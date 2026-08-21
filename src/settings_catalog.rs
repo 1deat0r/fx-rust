@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn catalog_is_ordered_and_unique() {
-        let mut names = known_keys();
+        let names = known_keys();
         let mut uniq = names.clone();
         uniq.sort();
         uniq.dedup();

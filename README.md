@@ -9,11 +9,13 @@ code with a single keystroke or fully hands-free.
 
 ## Implemented surface
 
-- **Toolkit (21 built-ins + MCP)**: bash/shell, filesystem (read, write, edit,
-  delete, rename, copy, mkdir, list, glob, grep, info), web_search / web_fetch,
-  memory, skills, install_skill, ask_user_question, run in-workspace,
-  **view_image** (vision: attaches base64 image blocks for vision-capable
-  models), **subagent** (nested agent runs, depth-capped at 3, own session).
+- **Toolkit (22 built-ins + MCP)**: bash/shell, filesystem (read, write, edit,
+  delete, rename, copy, mkdir, list, glob, grep, info), web_search / web_fetch
+  (SSRF-guarded URL policy, HTML→Markdown extraction), **semantic_search**
+  (BM25-lite ranked workspace search), memory, skills, install_skill,
+  ask_user_question, run in-workspace, **view_image** (vision: attaches base64
+  image blocks for vision-capable models), **subagent** (nested agent runs,
+  depth-capped at 3, own session).
 - **Lifecycle hooks**: `PreToolUse` (allow / block / rewrite), `Stop`,
   `PostTurnEnd`, `AttentionRequired` — file-script shims at
   `~/.fx/hooks/<Event>` and `<workspace>/.fx/hooks/<Event>` speaking
