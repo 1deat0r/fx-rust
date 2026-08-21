@@ -12,6 +12,7 @@
 
 pub mod agent;
 pub mod approval;
+pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod context;
@@ -19,6 +20,9 @@ pub mod exec_memory;
 pub mod history;
 pub mod hooks;
 pub mod mcp;
+pub mod mcp_schema;
+pub mod mcp_transport;
+pub mod model_catalog;
 pub mod permissions;
 pub mod providers;
 pub mod sessions;

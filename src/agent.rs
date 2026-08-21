@@ -100,6 +100,19 @@ pub async fn run(
         system_base.push_str(&format!("\n## User's current request\n{t}\n"));
     }
 
+    // MCP discovery happens once per run: server availability (for the
+    // model catalog) plus the flattened tool list published to the model.
+    let mcp_discovery = crate::mcp::discover(&config.mcp_servers);
+    if !mcp_discovery.states.is_empty() {
+        system_base.push_str(
+            "
+
+## MCP servers
+",
+        );
+        system_base.push_str(&crate::model_catalog::render_prompt_section(&mcp_discovery));
+    }
+
     // Prompt history: append user prompts to ~/.fx/history.jsonl.
     if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
         let _ =
@@ -136,7 +149,7 @@ pub async fn run(
     let max_steps = config.max_agent_steps;
 
     // Publish connected MCP server tools to the model (once per agent run).
-    let mcp_tools = crate::mcp::list_all_tools(&config.mcp_servers);
+    let mcp_tools = mcp_discovery.tools;
 
     // Execution memory: a bounded record of executed tool calls, replayed
     // into the system prompt each round (fx execution_memory).

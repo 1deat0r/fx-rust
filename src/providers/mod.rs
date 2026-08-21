@@ -280,11 +280,39 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
         });
     }
 
+    // Credential fallback: fxrs auth store (~/.fx/auth.json).
+    let store = crate::auth::load().unwrap_or_default();
+    let provider_key = if is_anthropic_model {
+        Some("anthropic")
+    } else if gateway_key.is_some() || base.is_some() {
+        None
+    } else {
+        Some("gateway")
+    };
+    if let Some(pk) = provider_key {
+        let (key, base_url) = crate::auth::resolve_key(pk, &store);
+        if let Some(key) = key.filter(|k| !k.is_empty()) {
+            let kind = if pk == "anthropic" {
+                ProviderKind::Anthropic
+            } else if pk == "openai" {
+                ProviderKind::OpenAi
+            } else {
+                ProviderKind::Gateway
+            };
+            return Ok(ProviderConfig {
+                provider: kind,
+                model,
+                base_url,
+                api_key: Some(key),
+            });
+        }
+    }
+
     bail!(
         "no model credentials found.\n\
          Configure one of:\n\
-         \x20 AI_GATEWAY_API_KEY — Vercel AI Gateway key (fxrs setup)\n\
-         \x20 ANTHROPIC_API_KEY — Anthropic API key\n\
+         \x20 AI_GATEWAY_API_KEY — Vercel AI Gateway key (fxrs setup, or `fxrs auth add gateway`)\n\
+         \x20 ANTHROPIC_API_KEY — Anthropic API key (or `fxrs auth add anthropic`)\n\
          \x20 AI_BASE_URL — any OpenAI-compatible endpoint (optionally AI_API_KEY)\n\
          Model: {model}"
     )

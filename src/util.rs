@@ -13,3 +13,8 @@ pub fn today() -> String {
     let now = chrono::Local::now();
     format!("{}", now.format("%Y-%m-%d"))
 }
+
+pub fn today_with_time() -> String {
+    let now = chrono::Local::now();
+    format!("{}", now.format("%Y-%m-%dT%H:%M:%S%z"))
+}

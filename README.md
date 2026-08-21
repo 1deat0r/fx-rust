@@ -21,14 +21,25 @@ code with a single keystroke or fully hands-free.
   `~/.fx/hooks/<Event>` and `<workspace>/.fx/hooks/<Event>` speaking
   Claude-Code-style stdin-JSON / stdout `{"decision": ...}`; hook failures
   never abort the agent. Inspect with `fxrs hooks`.
-- **MCP stdio clients**: `mcpServers` array in `~/.fx/settings.json`,
-  workspace settings, or repo `.fx.json` (`command` / `args` / `env` /
-  `transport: stdio`). Servers are discovered once per run and their tools
-  published as `mcp__<server>__<tool>`; call them like any built-in. A broken
-  server never wedges the agent (per-call process + 90s timeout). Inspect
-  with `fxrs mcp`.
+- **MCP clients (stdio + remote)**: `mcpServers` array in `~/.fx/settings.json`,
+  workspace settings, or repo `.fx.json`. Three transports: `stdio` (default,
+  `command`/`args`/`env`), `http` / `streamable-http` (modern streamable HTTP),
+  and `sse` / `http-sse` (legacy HTTP+SSE). Remote endpoints are validated
+  (https always; http only loopback), protocol versions negotiate with
+  `-32022` fallback, and `Mcp-Session-Id` round-trips. Remote tool arguments
+  are JSON-schema validated before the call with precise error paths. Env
+  values expand `${VAR}`; `header_env` pulls headers from the environment;
+  `bearer_token_env` adds `Authorization: Bearer <env>`. A broken server
+  never wedges the agent (per-call connection + timeout). Inspect with
+  `fxrs mcp`.
 - **Upgrade**: `fxrs upgrade --install` checks the latest GitHub release and
   re-installs from source (no-op in this dev build unless `--install`).
+- **Auth store + model catalog**: `fxrs auth add <provider> [--key K] [--base-url U]`
+  stores API keys in `~/.fx/auth.json` (mode 0600; `fxrs login` is a shortcut);
+  env vars always win as a fallback order. `fxrs models` shows the resolved
+  provider plus the MCP model catalog (per-server availability + tool counts),
+  and the catalog is injected into the agent system prompt as a bounded
+  `<mcp_servers>` section.
 
 ## Pending (targeted — full 1:1 mandate)
 
@@ -36,9 +47,9 @@ fxrs is a **1:1 full Rust re-write** of upstream fx: every subsystem, command,
 tool, protocol, screen, and binding ships upstream is being rebuilt in Rust
 with behavioral equivalence. Still pending: the full TUI render engine +
 input composer, ACP server, NAPI/WASM bindings + JS SDK, OAuth/auth stack,
-the full MCP streamable-http / elicitation / auth stack (stdio only today),
+MCP elicitation / OAuth + keychain, per-model gateway capabilities,
 the full subagent subsystem, background/terminal execution, usage reporting,
-GitHub `pr`/`issue` flows, `doctor`/`usage`/`replay`/`auth`/`gh` CLI commands.
+GitHub `pr`/`issue` flows, and the `gh`/`review`/`capture`/`one-off` CLI commands.
 See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
@@ -77,7 +88,7 @@ and hides that markup from the terminal and the saved transcript.
   `~/.fx/sessions/<workspace-hash>/`, resume, per-session grants.
 - **CLI** (`src/cli.rs`, `src/main.rs`) — bare interactive shell, `ask`,
   `resume`, `sessions`, `session`, `status`, `permissions`, `setup`,
-  `models`, `help`, `version`.
+  `models`, `mcp`, `auth`, `login`, `help`, `version`.
 
 ## Usage
 

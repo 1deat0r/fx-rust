@@ -50,6 +50,51 @@ pub struct WorkspaceFile {
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
+/// MCP transport, matching upstream fx's `McpTransport` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpTransport {
+    Stdio,
+    /// Streamable HTTP transport (modern; `transport: "http"` / "streamable-http").
+    Http,
+    /// Legacy HTTP + SSE transport (`transport: "sse"` / "http-sse" / "streamable-http-sse").
+    Sse,
+}
+
+impl McpTransport {
+    /// Parse a config transport string. Missing/invalid values default to stdio,
+    /// mirroring upstream's default `McpTransport = .stdio`.
+    pub fn parse(s: Option<&str>) -> McpTransport {
+        match s.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("http") | Some("streamable-http") | Some("streamable_http") => McpTransport::Http,
+            Some("sse") | Some("http-sse") | Some("http_sse") | Some("streamable-http-sse") => {
+                McpTransport::Sse
+            }
+            _ => McpTransport::Stdio,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            McpTransport::Stdio => "stdio",
+            McpTransport::Http => "http",
+            McpTransport::Sse => "sse",
+        }
+    }
+}
+
+/// MCP OAuth/auth configuration, matching upstream fx's `McpAuthConfig`.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct McpAuthConfig {
+    pub resource: Option<String>,
+    pub issuer: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret_env: Option<String>,
+    pub client_metadata_url: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
 /// MCP server definition, matching upstream fx's McpServerConfig shape.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -64,7 +109,138 @@ pub struct McpServerConfig {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: std::collections::BTreeMap<String, String>,
+    /// Additional headers pulled from the environment (`NAME` -> `${ENV_VAR}`).
+    #[serde(default)]
+    pub header_env: std::collections::BTreeMap<String, String>,
+    /// Read a bearer token from the named environment variable.
+    pub bearer_token_env: Option<String>,
+    pub auth: Option<McpAuthConfig>,
+    pub allow_stored_credentials: Option<bool>,
     pub required: Option<bool>,
+    /// Explicitly disable a server without removing the config entry.
+    pub enabled: Option<bool>,
+    pub startup_timeout_ms: Option<u64>,
+    pub operation_timeout_ms: Option<u64>,
+}
+
+impl McpServerConfig {
+    pub fn transport_kind(&self) -> McpTransport {
+        McpTransport::parse(self.transport.as_deref())
+    }
+
+    /// A configured-but-disabled server is skipped entirely.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+
+    pub fn requires_remote_url(&self) -> bool {
+        self.transport_kind() != McpTransport::Stdio
+    }
+
+    /// The starting `command` for stdio servers (null for remote transports).
+    pub fn stdio_command(&self) -> Option<&str> {
+        if self.transport_kind() != McpTransport::Stdio {
+            return None;
+        }
+        self.command.as_deref().filter(|c| !c.is_empty())
+    }
+
+    /// The `url` for remote transports (null for stdio servers).
+    pub fn remote_url(&self) -> Option<&str> {
+        if self.transport_kind() == McpTransport::Stdio {
+            return None;
+        }
+        self.url.as_deref().filter(|u| !u.is_empty())
+    }
+
+    /// Expand `${VAR}` / `$VAR` references in an env value against the process
+    /// environment. Unknown variables expand to empty, matching common MCP
+    /// config conventions (a literal-value escape is available as `$${...}`).
+    pub fn expand_env_value(value: &str, environ: &dyn Fn(&str) -> Option<String>) -> String {
+        let mut out = String::with_capacity(value.len());
+        let rest = value;
+        let mut i = 0;
+        while i < rest.len() {
+            if let Some(cur) = rest[i..].find('$') {
+                out.push_str(&rest[i..i + cur]);
+                let after = i + cur;
+                if let Some(_rest2) = rest[after..].strip_prefix("$$") {
+                    out.push('$');
+                    i = after + 2;
+                    continue;
+                }
+                if let Some(rest2) = rest[after..].strip_prefix("${") {
+                    if let Some(end) = rest2.find('}') {
+                        let name = &rest2[..end];
+                        out.push_str(&environ(name).unwrap_or_default());
+                        i = after + 2 + end + 1;
+                        continue;
+                    }
+                    // Unterminated `${` — leave as-is.
+                    out.push_str("${");
+                    i = after + 2;
+                    continue;
+                }
+                if let Some(rest2) = rest[after..].strip_prefix('$') {
+                    if let Some(name) = take_var_name(rest2) {
+                        out.push_str(&environ(name).unwrap_or_default());
+                        i = after + 1 + name.len();
+                        continue;
+                    }
+                    // Lone trailing '$'.
+                    out.push('$');
+                    i = after + 1;
+                    continue;
+                }
+                // Not a variable (`$` mid-word followed by nothing) — keep.
+                out.push('$');
+                i = after + 1;
+            } else {
+                out.push_str(&rest[i..]);
+                break;
+            }
+        }
+        out
+    }
+
+    /// Resolve the effective env map after `${VAR}` expansion.
+    pub fn resolved_env(&self) -> std::collections::BTreeMap<String, String> {
+        self.env
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    Self::expand_env_value(v, &|n| std::env::var(n).ok()),
+                )
+            })
+            .collect()
+    }
+
+    /// Resolve header_env entries against the environment.
+    pub fn resolved_header_env(&self) -> std::collections::BTreeMap<String, String> {
+        self.header_env
+            .iter()
+            .filter_map(|(k, v)| std::env::var(v).ok().map(|val| (k.clone(), val)))
+            .collect()
+    }
+
+    /// The bearer token, if configured, read from `bearer_token_env`.
+    pub fn bearer_token(&self) -> Option<String> {
+        self.bearer_token_env
+            .as_ref()
+            .and_then(|name| std::env::var(name).ok())
+            .filter(|v| !v.is_empty())
+    }
+}
+
+fn take_var_name(s: &str) -> Option<&str> {
+    let end = s
+        .find(|c: char| !(c == '_' || c.is_ascii_alphanumeric()))
+        .unwrap_or(s.len());
+    if end == 0 {
+        return None;
+    }
+    Some(&s[..end])
 }
 
 /// Repository-safe project config (`.fx.json`). Only public fields are accepted.

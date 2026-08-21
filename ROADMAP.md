@@ -28,7 +28,11 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; auto mode now runs sandbox+classifier first, model reviewer on undetermined (P1) |
 | Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1); **codec v2 + migration, latest pointer, per-session usage, delete, JSON output landed (P1)** |
 | Hooks (4 lifecycle events) | ✅ | `src/hooks.rs` — full definitions contract: HookDefinition catalog (loop point + purpose), Limits, AttentionKind, Scope/Invocation, call_id/step_index in PreToolUse, enriched `fxrs hooks` |
-| MCP stdio JSON-RPC | 🟡 | `src/mcp.rs`; stdio only |
+| MCP stdio JSON-RPC | ✅ | `src/mcp.rs` — LSP-framed stdio client, per-call processes |
+| MCP remote transports | ✅ | **Phase 2 — `src/mcp_transport.rs`** — streamable HTTP (`transport: "http"`), legacy HTTP+SSE (`"sse"`), endpoint validation (https/loopback-only), protocol-version negotiation with `-32022` fallback, `Mcp-Session-Id` round-trip, `${VAR}` env/header expansion, bearer-token auth |
+| MCP tool schema validation | ✅ | **Phase 2 — `src/mcp_schema.rs`** — `$ref`-resolving JSON-Schema validator (types, required, additionalProperties, items, ranges, patterns, enums, anyOf/oneOf/not); invalid remote args fail fast with precise paths |
+| Model catalog | ✅ | **Phase 2 — `src/model_catalog.rs`** — availability classification (ready/disabled/failed/auth_required), bounded `<mcp_servers>` prompt section with truncation, `fxrs models` table + `--json` |
+| Auth store | 🟡 | **Phase 2 — `src/auth.rs`** — `~/.fx/auth.json` (0600), `fxrs auth add/list/remove` + `fxrs login`; env vars still win; OAuth + keychain pending |
 | Toolkit | 🟡 | 21+ tools; see tool matrix |
 | CLI (interactive/ask/resume/sessions/session/status/permissions/setup/models/help/version/hooks/mcp/upgrade/doctor/usage/replay) | 🟡 | doctor/usage/replay landed (P1); auth/gh/review/capture/one-off/terminal/mcp_lookup pending |
 | Upgrade (`fxrs upgrade --install`) | 🟡 | `src/upgrade.rs` |
@@ -51,9 +55,9 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Input composer | `core/input/*` | kill ring, undo, paste, selection, unicode text bounds, editor state |
 | ACP (Agent Client Protocol) | `acp/*`, `core/cli/acp_runner.zig` | jsonrpc, server, sessions, prompt, test controls |
 | SDK + NAPI/WASM bindings | `napi_core_main.zig`, `wasm_core_main.zig`, `wasm_term_main.zig`, `sdk/**` | libfx JS, node bindings, term-demo, xterm adapter |
-| Auth/login | `core/auth/*`, `core/hosts/native_keychain.zig` | OAuth flow, credentials/secret, keychain, api-key validation |
-| Gateway model catalog | `core/gateway/*` | model catalog + metadata, failure diagnostics |
-| Full MCP stack | `core/mcp/*` (30 files) | streamable HTTP, legacy SSE/http-SSE, elicitation, MCP auth, protocol negotiation, stdio dispatcher, MRTR, tool subscription, json-schema resolver |
+| Auth/login | `core/auth/*`, `core/hosts/native_keychain.zig` | 🟡 API-key store + `fxrs auth`/`login` landed (P2); OAuth flow + keychain pending |
+| Gateway model catalog | `core/mcp/model_catalog.zig` | ✅ model catalog + availability metadata landed (P2) in `src/model_catalog.rs`; per-model capabilities pending |
+| Full MCP stack (rest) | `core/mcp/*` (30 files) | ✅ streamable HTTP + legacy SSE/http-SSE + protocol negotiation + json-schema resolver + stdio dispatcher landed (P2); elicitation, MCP OAuth (DCR), MRTR, tool subscription pending |
 | Full subagent system | `core/subagent/*` (21 files) + `ui/subagent/*` | domain, execution, manager, authority, approvals, communication, tool host, ui projection |
 | Background execution | `core/background/*`, `core/execution/*`, `tools/shell/background_process.zig` | background store/launch/restore/supervisor, process tree, local + devbox executors, command environment |
 | Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | native/tmux/browser sessions, shell resolver, recovery, takeover |
@@ -91,8 +95,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | skill · install_skill | ✅ |
 | view_image (vision) | ✅ |
 | subagent | 🟡 minimal |
-| mcp (stdio) | 🟡 |
-| semantic_search | ❌ |
+| mcp (stdio / streamable-http / http-sse) | ✅ |
+| semantic_search | ✅ (BM25-lite, P1) |
 | read_tool_result (session) | ❌ |
 | background_process (shell) | ❌ |
 | terminal · browser_terminal | ❌ |
@@ -102,7 +106,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 
 - **Phase 0 — Mandate + scaffolding (this commit).** ROADMAP, parity matrix, README correction, memory.
 - **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders, ✅ session codec v2 + migration + latest pointer + per-session usage + delete, ✅ settings catalog + context limits (+ context guard in agent loop). ✅ Phase 1 core backend parity is complete (session store/codec/catalog, config catalog + context limits, shell parsing, sandbox + auto-classifier, approval flow, usage, prompt history, replay tape, slash commands, tool-ready web tooling, full hooks contract, doctor/usage/replay/history/settings CLI). Phase 2 (protocols & auth) is next: full MCP stack, OAuth/login, gateway model catalog.
-- **Phase 2 — Protocols & auth.** Full MCP (streamable HTTP, legacy SSE, elicitation, auth, negotiation, json-schema), auth/login (OAuth + keychain), gateway model catalog/capabilities, context limits, prompt history.
+- **Phase 2 — Protocols & auth.** ✅ MCP streamable HTTP + legacy SSE/http-SSE transports, ✅ endpoint validation, ✅ protocol negotiation (-32022 fallback), ✅ MCP json-schema resolver, ✅ gateway model catalog + availability, ✅ auth store + `fxrs auth`/`login` (API key). Remaining: MCP elicitation, MCP OAuth (DCR + keychain), gateway per-model capabilities, prompts/history compaction parity.
 - **Phase 3 — Execution & terminal.** Background store/supervisor, process tree, local + devbox executors, terminal integration (native/tmux/browser), terminal + background_process tools.
 - **Phase 4 — Subagent & modes.** Full subagent subsystem + UI, modes/mods registries.
 - **Phase 5 — TUI.** Render engine, transcript runtime, footer + input composer, all screens, theme detection, resize, activity, notifications/sounds.

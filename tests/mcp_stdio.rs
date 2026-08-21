@@ -43,7 +43,14 @@ fn mini_server() -> McpServerConfig {
         env: Default::default(),
         url: None,
         headers: Default::default(),
+        header_env: Default::default(),
+        bearer_token_env: None,
+        auth: None,
+        allow_stored_credentials: None,
         required: Some(false),
+        enabled: Some(true),
+        startup_timeout_ms: None,
+        operation_timeout_ms: None,
     }
 }
 

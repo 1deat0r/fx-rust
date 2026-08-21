@@ -223,22 +223,65 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
         }
         Some("mcp") => {
             let cfg = config::resolve(&cwd())?;
+            let wants_json = args.clone().any(|a| a == "--json");
             if cfg.mcp_servers.is_empty() {
-                println!("no MCP servers configured");
-                println!("add an 'mcpServers' array to ~/.fx/settings.json or .fx.json");
-                println!("  settings.json: mcpServers: [{{ name, command, args, env (keys are optional) }}]");
-                println!("example: npx -y @modelcontextprotocol/server-fetch");
-            } else {
-                for srv in &cfg.mcp_servers {
-                    let tools = crate::mcp::list_tools(srv);
-                    println!("{} ({} tools):", srv.name, tools.len());
-                    for t in &tools {
-                        println!(
-                            "  {} -- {}",
-                            t.name,
-                            t.description.lines().next().unwrap_or("")
-                        );
-                    }
+                if wants_json {
+                    println!("{}", serde_json::json!({ "servers": [], "tools": [] }));
+                } else {
+                    println!("no MCP servers configured");
+                    println!("add an 'mcpServers' array to ~/.fx/settings.json or .fx.json");
+                    println!("  settings.json: mcpServers: [{{ name, command|transport, args, env, url, headers }}]");
+                    println!("example: npx -y @modelcontextprotocol/server-fetch");
+                    println!("remote:  {{ name, transport: \"http\"|\"sse\", url, headers, bearer_token_env }}");
+                }
+                return Ok(0);
+            }
+            let discovery = crate::mcp::discover(&cfg.mcp_servers);
+            if wants_json {
+                let servers: Vec<_> = discovery
+                    .states
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "name": s.name,
+                            "transport": s.transport,
+                            "enabled": s.enabled,
+                            "state": s.availability.as_str(),
+                            "tools": s.tool_count,
+                            "error": s.error,
+                        })
+                    })
+                    .collect();
+                let tools: Vec<_> = discovery
+                    .tools
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "name": crate::mcp::prefixed_name(&t.server, &t.name),
+                            "server": t.server,
+                            "description": t.description,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({ "servers": servers, "tools": tools })
+                );
+                return Ok(0);
+            }
+            for s in &discovery.states {
+                let state = s.availability.as_str();
+                if let Some(err) = &s.error {
+                    println!("{} [{}] ({}) {}", s.name, s.transport, state, err);
+                } else {
+                    println!("{} [{}] ({} tools)", s.name, s.transport, s.tool_count);
+                }
+                for t in discovery.tools.iter().filter(|t| t.server == s.name) {
+                    println!(
+                        "  {} -- {}",
+                        t.name,
+                        t.description.lines().next().unwrap_or("")
+                    );
                 }
             }
             Ok(0)
@@ -280,6 +323,123 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             }
             Ok(0)
         }
+        Some("auth") | Some("login") => {
+            let args: Vec<String> = args.map(|s| s.to_string()).collect();
+            let sub = args.first().map(|s| s.as_str());
+            let is_login = cmd.map(|s| s.as_str()) == Some("login");
+            match (is_login, sub) {
+                (true, _) | (_, Some("add")) | (_, Some("set")) => {
+                    let mut provider = args
+                        .iter()
+                        .skip(1)
+                        .find(|a| !a.starts_with('-'))
+                        .cloned()
+                        .unwrap_or_else(|| "auto".to_string());
+                    let key = args
+                        .iter()
+                        .position(|a| a == "--key")
+                        .and_then(|i| args.get(i + 1).cloned())
+                        .or_else(|| std::env::var("FX_API_KEY").ok())
+                        .or_else(|| std::env::var("AI_API_KEY").ok());
+                    let base_url = args
+                        .iter()
+                        .position(|a| a == "--base-url")
+                        .and_then(|i| args.get(i + 1).cloned());
+                    if provider == "auto" {
+                        let cfg = config::resolve(&cwd())?;
+                        provider = if cfg.model.starts_with("anthropic/")
+                            || cfg.model.starts_with("claude-")
+                        {
+                            "anthropic".to_string()
+                        } else {
+                            "gateway".to_string()
+                        };
+                    }
+                    let canonical = crate::auth::canonical_provider(&provider)?;
+                    let key = match key {
+                        Some(k) => k,
+                        None => {
+                            eprintln!(
+                                "fxrs auth add {canonical}: no API key provided\n  pass --key <key>, set FX_API_KEY/AI_API_KEY, or set the provider env var"
+                            );
+                            return Ok(1);
+                        }
+                    };
+                    if let Some(base) = &base_url {
+                        crate::auth::set_key(canonical, &key, Some(base))?;
+                    } else {
+                        crate::auth::set_key(canonical, &key, None)?;
+                    }
+                    println!(
+                        "stored credential for `{canonical}` in {}",
+                        crate::auth::auth_path().display()
+                    );
+                    println!(
+                        "env fallback still wins; remove the env var or run `fxrs auth remove {canonical}` to disable"
+                    );
+                    Ok(0)
+                }
+                (false, Some("remove") | Some("rm") | Some("delete")) => {
+                    let provider = args
+                        .iter()
+                        .skip(1)
+                        .find(|a| !a.starts_with('-'))
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("fxrs auth remove <provider>"))?;
+                    let canonical = crate::auth::canonical_provider(&provider)?;
+                    let removed = crate::auth::remove_key(canonical)?;
+                    if removed {
+                        println!("removed credential for `{canonical}`");
+                    } else {
+                        println!("no stored credential for `{canonical}`");
+                    }
+                    Ok(0)
+                }
+                (false, Some("list") | Some("status") | Some("ls")) | (false, None) => {
+                    let store = crate::auth::load()?;
+                    if store.providers.is_empty() {
+                        println!(
+                            "no stored credentials ({} exists: {})",
+                            {
+                                let path = crate::auth::auth_path();
+                                if path.exists() { "yes" } else { "no" }.to_string()
+                            },
+                            crate::auth::auth_path().display()
+                        );
+                    } else {
+                        for (name, cred) in &store.providers {
+                            let masked = cred
+                                .api_key
+                                .as_deref()
+                                .map(|k| {
+                                    if k.len() <= 4 {
+                                        "****".to_string()
+                                    } else {
+                                        format!("{}…{}", &k[..2], &k[k.len() - 2..])
+                                    }
+                                })
+                                .unwrap_or_else(|| "—".to_string());
+                            let base = cred
+                                .base_url
+                                .as_deref()
+                                .map(|u| format!(" ({u})"))
+                                .unwrap_or_default();
+                            let created = cred
+                                .created_at
+                                .as_deref()
+                                .map(|c| format!(" since {c}"))
+                                .unwrap_or_default();
+                            println!("{name}: {masked}{base}{created}");
+                        }
+                    }
+                    Ok(0)
+                }
+                _ => {
+                    eprintln!("fxrs auth: usage: add <provider> [--key KEY] [--base-url URL] | remove <provider> | list | status");
+                    Ok(1)
+                }
+            }
+        }
         Some("setup") => {
             println!("fxrs needs a model endpoint. Configure one of:");
             println!("  AI_GATEWAY_API_KEY=...            (Vercel AI Gateway, default)");
@@ -294,8 +454,44 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
         }
         Some("models") => {
             let cfg = config::resolve(&cwd())?;
+            let wants_json = args.clone().any(|a| a == "--json");
+            if wants_json {
+                let discovery = crate::mcp::discover(&cfg.mcp_servers);
+                let servers: Vec<_> = discovery
+                    .states
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "name": s.name,
+                            "transport": s.transport,
+                            "state": s.availability.as_str(),
+                            "tools": s.tool_count,
+                            "error": s.error,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "model": cfg.model,
+                        "provider": providers_summary(&cfg),
+                        "mcp_servers": servers,
+                    })
+                );
+                return Ok(0);
+            }
             println!("resolved model: {}", cfg.model);
             println!("provider: {}", providers_summary(&cfg));
+            let discovery = crate::mcp::discover(&cfg.mcp_servers);
+            if !discovery.states.is_empty() {
+                println!();
+                println!("MCP servers (model catalog):");
+                print!(
+                    "{}",
+                    crate::model_catalog::render_models_table(&discovery.states)
+                );
+                println!();
+            }
             println!("\nSet FX_MODEL to choose. Examples:");
             println!("  openai/gpt-5.4        (AI Gateway default)");
             println!("  claude-sonnet-4-6      (Anthropic API)");
@@ -568,16 +764,34 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
         out.push(('w', format!("no sessions yet: {}", sessions_dir.display())));
     }
 
-    // 5. MCP server configs: command binaries exist when a command is given.
+    // 5. MCP server configs: stdio commands resolve in PATH; remote
+    //    endpoints are validated (https or loopback http).
     for srv in &cfg.mcp_servers {
-        if srv.transport.as_deref().unwrap_or("stdio") != "stdio" {
-            out.push((
-                'w',
-                format!(
-                    "mcp server `{}`: non-stdio transport not yet ported",
-                    srv.name
-                ),
-            ));
+        if !srv.is_enabled() {
+            out.push(('w', format!("mcp server `{}`: disabled", srv.name)));
+            continue;
+        }
+        if srv.requires_remote_url() {
+            match srv.remote_url() {
+                Some(url) => {
+                    if let Err(e) = crate::mcp_transport::validate_endpoint(url) {
+                        out.push(('f', format!("mcp server `{}`: {e}", srv.name)));
+                    } else if srv.bearer_token_env.is_some() && srv.bearer_token().is_none() {
+                        out.push((
+                            'w',
+                            format!(
+                                "mcp server `{}`: bearer_token_env `{}` is unset",
+                                srv.name,
+                                srv.bearer_token_env.as_deref().unwrap_or("")
+                            ),
+                        ));
+                    }
+                }
+                None => out.push((
+                    'f',
+                    format!("mcp server `{}`: remote transport needs a `url`", srv.name),
+                )),
+            }
             continue;
         }
         if let Some(cmd) = &srv.command {
