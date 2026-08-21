@@ -4,9 +4,9 @@
 //! workspace; required fields are enforced with structured errors; obviously
 //! wrong types are coerced or rejected.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::tools::{ToolContext, arg};
+use crate::tools::{arg, ToolContext};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prepared {
@@ -20,16 +20,53 @@ impl Prepared {
         Self { args, error: None }
     }
     fn fail(msg: impl Into<String>) -> Self {
-        Self { args: Value::Null, error: Some(msg.into()) }
+        Self {
+            args: Value::Null,
+            error: Some(msg.into()),
+        }
     }
 }
 
 const PATH_TOOLS: &[&str] = &[
-    "read_file", "write_file", "edit_file", "delete_file", "rename_file",
-    "copy_file", "create_folder", "open_file", "file_info",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "rename_file",
+    "copy_file",
+    "create_folder",
+    "open_file",
+    "file_info",
 ];
 
-const PATH_KEYS: &[&str] = &["file_path", "path", "folder_path", "old_path", "new_path", "source", "destination", "target"];
+const PATH_KEYS: &[&str] = &[
+    "file_path",
+    "path",
+    "folder_path",
+    "old_path",
+    "new_path",
+    "source",
+    "destination",
+    "target",
+];
+
+/// True when `resolved` stays inside `root` after lexically normalizing `..`.
+fn resolved_under_workspace(resolved: &std::path::Path, root: &std::path::Path) -> bool {
+    let mut out = std::path::PathBuf::new();
+    use std::path::Component;
+    for comp in resolved.components() {
+        match comp {
+            Component::ParentDir => {
+                if !out.pop() {
+                    return false;
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out.starts_with(root)
+}
 
 fn as_str(v: Option<&Value>) -> Option<String> {
     v.and_then(|v| v.as_str()).map(|s| s.to_string())
@@ -101,34 +138,50 @@ fn prepare_paths(args: &Value, ctx: &ToolContext) -> Prepared {
         return Prepared::fail("file tools require an object of arguments");
     };
     let mut out = serde_json::Map::<String, Value>::new();
+    let mut escapes = false;
     for (k, v) in obj {
         if PATH_KEYS.contains(&k.as_str()) {
             if let Some(s) = v.as_str() {
-                out.insert(k.clone(), json!(ctx.resolve(s).display().to_string()));
+                let resolved = ctx.resolve(s);
+                // Lexical escape guard: `..` components must not leave the
+                // workspace (defense in depth alongside the sandbox check).
+                if !resolved_under_workspace(&resolved, &ctx.workspace) {
+                    escapes = true;
+                }
+                out.insert(k.clone(), json!(resolved.display().to_string()));
                 continue;
             }
         }
         out.insert(k.clone(), v.clone());
     }
+    if escapes {
+        return Prepared::fail("file path escapes the workspace");
+    }
     let a = Value::Object(out);
     // Required path presence.
     let has_path = PATH_KEYS.iter().any(|k| {
-        a.get(*k).and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false)
+        a.get(*k)
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
     });
     if has_path {
         Prepared::ok(a)
     } else {
         let _ = arg(args, "file_path"); // silence unused-arg lint on helper
-        Prepared::fail(format!("{name_placeholder} requires a file path (file_path/path/folder_path)", name_placeholder = "this tool"))
+        Prepared::fail(format!(
+            "{name_placeholder} requires a file path (file_path/path/folder_path)",
+            name_placeholder = "this tool"
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use crate::config::Config;
 
     fn ctx(ws: &str) -> ToolContext {
         ToolContext {
@@ -169,9 +222,13 @@ mod tests {
     fn required_fields_enforced() {
         let c = ctx("/ws");
         assert!(prepare("run_command", &json!({}), &c).error.is_some());
-        assert!(prepare("web_search", &json!({"query": ""}), &c).error.is_some());
+        assert!(prepare("web_search", &json!({"query": ""}), &c)
+            .error
+            .is_some());
         assert!(prepare("semantic_search", &json!({}), &c).error.is_some());
-        assert!(prepare("run_command", &json!({"command": "ls"}), &c).error.is_none());
+        assert!(prepare("run_command", &json!({"command": "ls"}), &c)
+            .error
+            .is_none());
     }
 
     #[test]
@@ -183,9 +240,24 @@ mod tests {
     }
 
     #[test]
+    fn workspace_escape_rejected() {
+        let c = ctx("/ws");
+        let p = prepare("read_file", &json!({"file_path": "../../etc/passwd"}), &c);
+        assert!(p.error.is_some(), "escape should fail, got {:?}", p.error);
+        assert!(p.error.as_deref().unwrap().contains("escapes"));
+        // Same-directory .. is fine.
+        let q = prepare("read_file", &json!({"file_path": "a/../b.txt"}), &c);
+        assert!(q.error.is_none());
+    }
+
+    #[test]
     fn path_renames_absolutize_all_keys() {
         let c = ctx("/ws");
-        let p = prepare("rename_file", &json!({"old_path": "a.txt", "new_path": "b.txt"}), &c);
+        let p = prepare(
+            "rename_file",
+            &json!({"old_path": "a.txt", "new_path": "b.txt"}),
+            &c,
+        );
         assert_eq!(p.args["old_path"], json!("/ws/a.txt"));
         assert_eq!(p.args["new_path"], json!("/ws/b.txt"));
     }

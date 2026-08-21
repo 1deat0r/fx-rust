@@ -13,7 +13,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::McpServerConfig;
 
@@ -60,11 +60,25 @@ fn spawn(cfg: &McpServerConfig) -> Result<Session> {
     for (k, v) in &cfg.env {
         cmd.env(k, v);
     }
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
-    let mut child = cmd.spawn().with_context(|| format!("spawn MCP server {}", cfg.name))?;
-    let stdin = child.stdin.take().ok_or_else(|| anyhow!("MCP server stdin not available"))?;
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("MCP server stdout not available"))?;
-    Ok(Session { child, stdin, reader: BufReader::new(stdout) })
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn MCP server {}", cfg.name))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("MCP server stdin not available"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("MCP server stdout not available"))?;
+    Ok(Session {
+        child,
+        stdin,
+        reader: BufReader::new(stdout),
+    })
 }
 
 fn write_msg(stdin: &mut ChildStdin, msg: &Value) -> Result<()> {
@@ -145,7 +159,10 @@ fn handshake(session: &mut Session, server: &str) -> Result<()> {
     } else {
         bail!("MCP initialize returned no protocolVersion");
     }
-    write_msg(&mut session.stdin, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?;
+    write_msg(
+        &mut session.stdin,
+        &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+    )?;
     Ok(())
 }
 
@@ -163,9 +180,20 @@ pub fn list_tools(cfg: &McpServerConfig) -> Vec<McpTool> {
             for t in arr {
                 tools.push(McpTool {
                     server: cfg.name.clone(),
-                    name: t.get("name").and_then(|n| n.as_str()).unwrap_or("unnamed").to_string(),
-                    description: t.get("description").and_then(|d| d.as_str()).unwrap_or_default().to_string(),
-                    input_schema: t.get("inputSchema").cloned().unwrap_or_else(|| json!({ "type": "object" })),
+                    name: t
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unnamed")
+                        .to_string(),
+                    description: t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    input_schema: t
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or_else(|| json!({ "type": "object" })),
                 });
             }
         }
@@ -195,7 +223,10 @@ pub fn call(server_cfg: &McpServerConfig, tool: &str, arguments: Value) -> Resul
             json!({ "name": tool, "arguments": arguments }),
         )?;
         let mut text = String::new();
-        let mut is_error = result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mut is_error = result
+            .get("isError")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let Some(arr) = result.get("content").and_then(|c| c.as_array()) {
             for item in arr {
                 if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
@@ -222,7 +253,10 @@ pub fn call(server_cfg: &McpServerConfig, tool: &str, arguments: Value) -> Resul
 }
 
 /// Run `f` on a worker thread, aborting after `secs` seconds.
-fn with_timeout<T: Send + 'static>(secs: u64, f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+fn with_timeout<T: Send + 'static>(
+    secs: u64,
+    f: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(f());
@@ -251,7 +285,10 @@ pub fn execute_mcp(name: &str, args: &Value, servers: &[McpServerConfig]) -> Val
     let Some(cfg) = servers.iter().find(|c| c.name == server) else {
         return json!({ "error": format!("MCP server not configured: {server}") });
     };
-    let args_val = args.get("arguments").cloned().unwrap_or_else(|| args.clone());
+    let args_val = args
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| args.clone());
     match call(cfg, &tool, args_val) {
         Ok(v) => v,
         Err(e) => json!({ "error": format!("MCP {server}/{tool}: {e:#}") }),
@@ -264,7 +301,10 @@ mod tests {
 
     #[test]
     fn prefixed_names_roundtrip() {
-        assert_eq!(prefixed_name("fetch", "http_fetch"), "mcp__fetch__http_fetch");
+        assert_eq!(
+            prefixed_name("fetch", "http_fetch"),
+            "mcp__fetch__http_fetch"
+        );
         let (s, t) = parse_prefixed("mcp__fetch__http_fetch").unwrap();
         assert_eq!((s.as_str(), t.as_str()), ("fetch", "http_fetch"));
         assert!(parse_prefixed("run_command").is_none());

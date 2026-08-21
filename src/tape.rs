@@ -28,19 +28,22 @@ pub struct TapeStore {
 }
 
 fn session_dir(workspace: &Path, id: &str) -> PathBuf {
-    let canon = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let canon = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let key = canon.to_string_lossy().to_string();
     let hash = simple_hash(&key);
-    fx_home().join("sessions").join(format!("ws-{hash}")).join(id)
-}
-
-pub fn tape_path(workspace: &Path, id: &str) -> PathBuf {
-    session_dir(workspace, id).parent().unwrap_or(Path::new(".")).join(format!("{id}.tape.jsonl"))
+    fx_home()
+        .join("sessions")
+        .join(format!("ws-{hash}"))
+        .join(id)
 }
 
 impl TapeStore {
     pub fn for_session(workspace: &Path, id: &str) -> Self {
-        Self { root: session_dir(workspace, id) }
+        Self {
+            root: session_dir(workspace, id),
+        }
     }
 
     pub fn tap_path(&self, id: &str) -> PathBuf {
@@ -95,7 +98,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now() -> u128 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
     }
 
     #[test]
@@ -105,8 +111,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         let ws = Path::new("/tmp/fxrs-tape-ws");
         let store = TapeStore::for_session(ws, "tape-1");
-        store.record(&TapeEntry { ts_ms: now(), tool: "run_command".into(), target: "cargo test".into(), ok: true, preview: "ok. 3 passed".into() }, "tape-1");
-        store.record(&TapeEntry { ts_ms: now(), tool: "write_file".into(), target: "/tmp/fxrs-tape-ws/a.rs".into(), ok: false, preview: "error: denied".into() }, "tape-1");
+        store.record(
+            &TapeEntry {
+                ts_ms: now(),
+                tool: "run_command".into(),
+                target: "cargo test".into(),
+                ok: true,
+                preview: "ok. 3 passed".into(),
+            },
+            "tape-1",
+        );
+        store.record(
+            &TapeEntry {
+                ts_ms: now(),
+                tool: "write_file".into(),
+                target: "/tmp/fxrs-tape-ws/a.rs".into(),
+                ok: false,
+                preview: "error: denied".into(),
+            },
+            "tape-1",
+        );
         let tape = store.read("tape-1");
         assert_eq!(tape.len(), 2);
         assert_eq!(tape[0].tool, "run_command");

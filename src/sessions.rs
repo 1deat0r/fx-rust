@@ -96,13 +96,19 @@ impl SessionStore {
     pub(crate) fn dir_for(&self, workspace: &Path) -> PathBuf {
         // Sanitize workspace path into a directory name: absolute paths become
         // `ws-<hash of canonical path>` to keep it filesystem-safe.
-        let canon = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        let canon = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         let key = canon.to_string_lossy().to_string();
         let hash = simple_hash(&key);
         self.root.join(format!("ws-{hash}"))
     }
 
-    pub fn create(&self, workspace: &Path, _interactive: bool) -> Result<(Vec<Message>, String, BTreeMap<String, String>)> {
+    pub fn create(
+        &self,
+        workspace: &Path,
+        _interactive: bool,
+    ) -> Result<(Vec<Message>, String, BTreeMap<String, String>)> {
         let id = new_session_id(workspace);
         let _ = self.dir_for(workspace); // ensure dir exists
         Ok((Vec::new(), id, BTreeMap::new()))
@@ -113,14 +119,17 @@ impl SessionStore {
         if !path.exists() {
             return Ok(None);
         }
-        let data = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let sess = serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))?;
+        let data = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let sess =
+            serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))?;
         Ok(Some(sess))
     }
 
     pub fn load_or_error(&self, workspace: &Path, id: &str) -> Result<Session> {
-        self.load(workspace, id)?
-            .ok_or_else(|| anyhow::anyhow!("no session `{id}` in workspace {}", workspace.display()))
+        self.load(workspace, id)?.ok_or_else(|| {
+            anyhow::anyhow!("no session `{id}` in workspace {}", workspace.display())
+        })
     }
 
     pub fn save(&self, sess: &Session) -> Result<()> {
@@ -173,7 +182,10 @@ impl SessionStore {
                 true
             }
             other => {
-                eprintln!("[fxrs] session {}: unknown schema v{other}; leaving as-is", sess.id);
+                eprintln!(
+                    "[fxrs] session {}: unknown schema v{other}; leaving as-is",
+                    sess.id
+                );
                 false
             }
         }
@@ -231,7 +243,9 @@ impl SessionStore {
             // Filter by workspace when requested.
             if let Some(ws) = workspace {
                 let canon = ws.canonicalize().unwrap_or_else(|_| ws.to_path_buf());
-                if dir.file_name().to_string_lossy() != format!("ws-{}", simple_hash(&canon.to_string_lossy())) {
+                if dir.file_name().to_string_lossy()
+                    != format!("ws-{}", simple_hash(&canon.to_string_lossy()))
+                {
                     continue;
                 }
             }
@@ -278,7 +292,7 @@ impl SessionStore {
                 }
             }
         }
-        out.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+        out.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
         Ok(out)
     }
 
@@ -293,7 +307,7 @@ impl SessionStore {
         if summaries.is_empty() {
             return Ok(None);
         }
-        summaries.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+        summaries.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
         self.load(workspace, &summaries[0].id)
     }
 
@@ -310,11 +324,7 @@ impl SessionStore {
 
 pub fn workspace_name(workspace: &str) -> String {
     let trimmed = workspace.trim_end_matches('/');
-    trimmed
-        .rsplit('/')
-        .next()
-        .unwrap_or(workspace)
-        .to_string()
+    trimmed.rsplit('/').next().unwrap_or(workspace).to_string()
 }
 
 fn simple_hash(s: &str) -> String {
@@ -326,8 +336,13 @@ fn simple_hash(s: &str) -> String {
 }
 
 fn new_session_id(workspace: &Path) -> String {
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let canon = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let canon = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let hash = simple_hash(&canon.to_string_lossy());
     format!("s{ms:x}-{hash:.8}")
 }
@@ -429,7 +444,9 @@ mod tests {
     #[test]
     fn save_and_load_roundtrip() {
         let store = SessionStore::new().unwrap();
-        let (_, id, _) = store.create(Path::new("/tmp/fxrs-sess-test"), false).unwrap();
+        let (_, id, _) = store
+            .create(Path::new("/tmp/fxrs-sess-test"), false)
+            .unwrap();
         let sess = Session {
             schema_version: SCHEMA_VERSION,
             id: id.clone(),
@@ -444,10 +461,10 @@ mod tests {
             usage: Default::default(),
         };
         store.save(&sess).unwrap();
-        let loaded = store.load_or_error(Path::new("/tmp/fxrs-sess-test"), &id).unwrap();
+        let loaded = store
+            .load_or_error(Path::new("/tmp/fxrs-sess-test"), &id)
+            .unwrap();
         assert_eq!(loaded.messages.len(), 1);
         assert_eq!(loaded.messages[0].plain_text(), Some("hi"));
     }
 }
-
-

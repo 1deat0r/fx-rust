@@ -7,9 +7,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::{ToolContext, arg};
+use super::{arg, ToolContext};
 
 const STORE_NAME: &str = "memory.json";
 
@@ -25,7 +25,10 @@ fn store_path() -> PathBuf {
 
 fn workspace_prefix(ctx: &ToolContext) -> String {
     // Namespace by canonical workspace path so memories don't leak across repos.
-    let ws = ctx.workspace.canonicalize().unwrap_or_else(|_| ctx.workspace.clone());
+    let ws = ctx
+        .workspace
+        .canonicalize()
+        .unwrap_or_else(|_| ctx.workspace.clone());
     format!("ws:{}", ws.to_string_lossy())
 }
 
@@ -78,7 +81,9 @@ pub fn memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
         "write" => {
             let key = arg(args, "key").ok_or_else(|| anyhow::anyhow!("missing `key`"))?;
             let value = args.get("value").cloned().unwrap_or(Value::Null);
-            store.entries.insert(format!("{prefix}:{key}"), value.clone());
+            store
+                .entries
+                .insert(format!("{prefix}:{key}"), value.clone());
             save(&store)?;
             Ok(json!({ "result": "ok", "key": key, "value": value }))
         }

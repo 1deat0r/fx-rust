@@ -23,8 +23,8 @@ pub mod web;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
-use serde_json::{Value, json};
+use anyhow::{bail, Result};
+use serde_json::{json, Value};
 
 use crate::config::Config;
 
@@ -45,7 +45,11 @@ impl ToolContext {
     /// Resolve a possibly-relative path against the workspace.
     pub fn resolve(&self, p: &str) -> PathBuf {
         let path = Path::new(p);
-        if path.is_absolute() { path.to_path_buf() } else { self.workspace.join(path) }
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace.join(path)
+        }
     }
     pub fn in_workspace(&self, p: &Path) -> bool {
         p.starts_with(&self.workspace)
@@ -55,7 +59,10 @@ impl ToolContext {
             s.to_string()
         } else {
             let mut out: String = s.chars().take(self.max_result_bytes).collect();
-            out.push_str(&format!("\n… [truncated {} bytes]", s.len() - self.max_result_bytes));
+            out.push_str(&format!(
+                "\n… [truncated {} bytes]",
+                s.len() - self.max_result_bytes
+            ));
             out
         }
     }
@@ -68,10 +75,10 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
     match name {
         "run_command" => s("command"),
-        "read_file" | "write_file" | "edit_file" | "delete_file" | "rename_file"
-        | "copy_file" | "create_folder" | "open_file" | "file_info" => {
-            s("file_path").or_else(|| s("path")).or_else(|| s("folder_path"))
-        }
+        "read_file" | "write_file" | "edit_file" | "delete_file" | "rename_file" | "copy_file"
+        | "create_folder" | "open_file" | "file_info" => s("file_path")
+            .or_else(|| s("path"))
+            .or_else(|| s("folder_path")),
         "glob_files" | "grep_files" | "list_files" => s("pattern").or_else(|| s("path")),
         "semantic_search" => s("query"),
         n if n.starts_with("mcp__") => Some(n.to_string()),
@@ -82,11 +89,7 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
 
 /// Execute one tool call. Returns the JSON result to hand back to the model.
 /// Errors are surfaced as a structured error object (not an abort).
-pub async fn execute(
-    ctx: &ToolContext,
-    name: &str,
-    args: &Value,
-) -> Result<Value> {
+pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> {
     match name {
         "run_command" => bash::run_command(ctx, args).await,
         "read_file" => filesystem::read_file(ctx, args),
@@ -110,8 +113,15 @@ pub async fn execute(
         "install_skill" => skill::install_skill(ctx, args),
         "view_image" => vision::view_image(ctx, args),
         "subagent" => {
-            let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let model = args.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let prompt = args
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             subagent::run_subagent(ctx.config.clone(), ctx.store.clone(), prompt, model).await
         }
         "mcp" => {
@@ -129,14 +139,25 @@ pub async fn execute(
                 "call" => {
                     let server = arg(args, "server").unwrap_or("").to_string();
                     let tool = arg(args, "tool").unwrap_or("").to_string();
-                    let arguments = args.get("arguments").cloned().unwrap_or_else(|| serde_json::json!({}));
+                    let arguments = args
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
                     let full = format!("mcp__{server}__{tool}");
-                    Ok(crate::mcp::execute_mcp(&full, &serde_json::json!({ "arguments": arguments }), &ctx.config.mcp_servers))
+                    Ok(crate::mcp::execute_mcp(
+                        &full,
+                        &serde_json::json!({ "arguments": arguments }),
+                        &ctx.config.mcp_servers,
+                    ))
                 }
                 _ => Ok(err_json(format!("unknown mcp action: {sub}"))),
             }
         }
-        other if other.starts_with("mcp__") => Ok(crate::mcp::execute_mcp(other, args, &ctx.config.mcp_servers)),
+        other if other.starts_with("mcp__") => Ok(crate::mcp::execute_mcp(
+            other,
+            args,
+            &ctx.config.mcp_servers,
+        )),
         other => bail!("unknown tool: {other}"),
     }
 }
@@ -526,16 +547,21 @@ pub fn schemas() -> Vec<Value> {
 pub fn parse_text_tool_calls(text: &str) -> Vec<(String, Value)> {
     let text = normalize_dsml(text);
     let b = text.as_bytes();
-    let find_tag = |from: usize, tag: &str| -> Option<usize> {
-        text[from..].find(tag).map(|r| from + r)
-    };
+    let find_tag =
+        |from: usize, tag: &str| -> Option<usize> { text[from..].find(tag).map(|r| from + r) };
     let mut out = Vec::new();
     let mut pos = 0usize;
     while let Some(open) = find_tag(pos, "<invoke name=\"") {
-        let Some(name_end) = find_tag(open + "<invoke name=\"".len(), "\"") else { break };
+        let Some(name_end) = find_tag(open + "<invoke name=\"".len(), "\"") else {
+            break;
+        };
         let name = xml_unescape(&text[open + "<invoke name=\"".len()..name_end]);
-        let Some(body_open) = find_tag(name_end + 1, ">") else { break };
-        let Some(body_close) = find_tag(body_open + 1, "</invoke>") else { break };
+        let Some(body_open) = find_tag(name_end + 1, ">") else {
+            break;
+        };
+        let Some(body_close) = find_tag(body_open + 1, "</invoke>") else {
+            break;
+        };
         let body = &text[body_open + 1..body_close];
 
         let mut args = serde_json::Map::new();
@@ -543,13 +569,19 @@ pub fn parse_text_tool_calls(text: &str) -> Vec<(String, Value)> {
         while let Some(popen) = body[ppos..].find("<parameter name=\"") {
             let pabs = ppos + popen;
             let pname_start = pabs + "<parameter name=\"".len();
-            let Some(pname_end) = body[pname_start..].find('"') else { break };
+            let Some(pname_end) = body[pname_start..].find('"') else {
+                break;
+            };
             let key = xml_unescape(&body[pname_start..pname_start + pname_end]);
-            let Some(pgt) = body[pname_start + pname_end..].find('>') else { break };
+            let Some(pgt) = body[pname_start + pname_end..].find('>') else {
+                break;
+            };
             let val_start = pname_start + pname_end + pgt + 1;
-            let Some(pclose) = body[val_start..].find("</parameter>") else { break };
+            let Some(pclose) = body[val_start..].find("</parameter>") else {
+                break;
+            };
             let raw = xml_unescape(&body[val_start..val_start + pclose]);
-            let parsed = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::String(raw));
+            let parsed = serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw));
             args.insert(key, parsed);
             ppos = val_start + pclose + "</parameter>".len();
         }
@@ -647,7 +679,10 @@ enum Mark {
 
 /// Earliest marker occurrence in `s` among the given marker list.
 /// On offset ties (one marker is a prefix of another) the longer literal wins.
-fn find_markers(s: &str, markers: &'static [(&'static str, &'static str)]) -> Option<(usize, Mark)> {
+fn find_markers(
+    s: &str,
+    markers: &'static [(&'static str, &'static str)],
+) -> Option<(usize, Mark)> {
     let mut best: Option<(usize, usize, &'static str)> = None;
     for (marker, name) in markers {
         if let Some(i) = s.find(marker) {
@@ -688,7 +723,11 @@ impl Default for ToolMarkupMask {
 
 impl ToolMarkupMask {
     pub fn new() -> Self {
-        ToolMarkupMask { pending: String::new(), inside: false, depth: 0 }
+        ToolMarkupMask {
+            pending: String::new(),
+            inside: false,
+            depth: 0,
+        }
     }
 
     /// Feed one streamed text delta; returns the portion safe to display.
@@ -977,12 +1016,10 @@ Done."#;
     #[test]
     fn markup_mask_hides_invoke_without_wrapper() {
         let mut m = ToolMarkupMask::new();
-        let shown: String = [
-            "a<invoke name=\"x\"><parameter name=\"p\">1</parameter></invoke>b",
-        ]
-        .iter()
-        .map(|d| m.filter(d))
-        .collect();
+        let shown: String = ["a<invoke name=\"x\"><parameter name=\"p\">1</parameter></invoke>b"]
+            .iter()
+            .map(|d| m.filter(d))
+            .collect();
         let shown = format!("{shown}{}", m.finish());
         assert_eq!(shown, "ab");
     }
@@ -1009,17 +1046,25 @@ Done."#;
         .map(|d| m.filter(d))
         .collect();
         let shown = format!("{shown}{}", m.finish());
-        assert_eq!(shown, "I'll search for trending AI news by fetching from a few live sources.\n\n");
+        assert_eq!(
+            shown,
+            "I'll search for trending AI news by fetching from a few live sources.\n\n"
+        );
     }
 
     #[test]
     fn markup_mask_hides_empty_dsml_tool_calls_wrapper() {
         // Truncated/empty wrapper: nothing between the open and close tags.
         let mut m = ToolMarkupMask::new();
-        let shown: String = ["a", "<\u{ff5c}DSML\u{ff5c}tool_calls>\n", "</\u{ff5c}DSML\u{ff5c}tool_calls>", "b"]
-            .iter()
-            .map(|d| m.filter(d))
-            .collect();
+        let shown: String = [
+            "a",
+            "<\u{ff5c}DSML\u{ff5c}tool_calls>\n",
+            "</\u{ff5c}DSML\u{ff5c}tool_calls>",
+            "b",
+        ]
+        .iter()
+        .map(|d| m.filter(d))
+        .collect();
         let shown = format!("{shown}{}", m.finish());
         assert_eq!(shown, "ab");
     }

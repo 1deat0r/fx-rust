@@ -16,7 +16,12 @@ pub fn to_markdown(html: &str) -> String {
     while i < n {
         let c = chars[i];
         // Comments.
-        if c == '<' && i + 3 < n && chars[i + 1] == '!' && chars[i + 2] == '-' && chars[i + 3] == '-' {
+        if c == '<'
+            && i + 3 < n
+            && chars[i + 1] == '!'
+            && chars[i + 2] == '-'
+            && chars[i + 3] == '-'
+        {
             // skip to -->
             let mut j = i + 4;
             while j + 2 < n && !(chars[j] == '-' && chars[j + 1] == '-' && chars[j + 2] == '>') {
@@ -47,12 +52,22 @@ pub fn to_markdown(html: &str) -> String {
                 .collect();
 
             // Enter/exit script/style blocks.
-            if !is_close && matches!(name.as_str(), "script" | "style" | "template" | "svg" | "head" | "noscript") {
+            if !is_close
+                && matches!(
+                    name.as_str(),
+                    "script" | "style" | "template" | "svg" | "head" | "noscript"
+                )
+            {
                 skip_depth += 1;
                 continue;
             }
             if skip_depth > 0 {
-                if is_close && matches!(name.as_str(), "script" | "style" | "template" | "svg" | "head" | "noscript") {
+                if is_close
+                    && matches!(
+                        name.as_str(),
+                        "script" | "style" | "template" | "svg" | "head" | "noscript"
+                    )
+                {
                     skip_depth -= 1;
                 }
                 continue;
@@ -60,7 +75,8 @@ pub fn to_markdown(html: &str) -> String {
 
             if is_close {
                 match name.as_str() {
-                    "p" | "div" | "li" | "tr" | "section" | "blockquote" | "table" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    "p" | "div" | "li" | "tr" | "section" | "blockquote" | "table" | "h1"
+                    | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         push_newline(&mut out, &mut pending_blank);
                     }
                     "pre" => {
@@ -69,7 +85,7 @@ pub fn to_markdown(html: &str) -> String {
                         push_newline(&mut out, &mut pending_blank);
                     }
                     "b" | "strong" => out.push_str("**"),
-                    "i" | "em" => out.push_str("*"),
+                    "i" | "em" => out.push('*'),
                     "code" if !in_pre => out.push('`'),
                     "a" => {
                         out.push(']');
@@ -86,19 +102,41 @@ pub fn to_markdown(html: &str) -> String {
 
             match name.as_str() {
                 "br" => push_newline(&mut out, &mut pending_blank),
-                "p" | "div" | "tr" | "section" | "article" | "blockquote" | "ul" | "ol" | "table" | "hr" => {
+                "p" | "div" | "tr" | "section" | "article" | "blockquote" | "ul" | "ol"
+                | "table" | "hr" => {
                     push_newline(&mut out, &mut pending_blank);
                 }
-                "h1" => { push_newline(&mut out, &mut pending_blank); out.push_str("# "); }
-                "h2" => { push_newline(&mut out, &mut pending_blank); out.push_str("## "); }
-                "h3" => { push_newline(&mut out, &mut pending_blank); out.push_str("### "); }
-                "h4" => { push_newline(&mut out, &mut pending_blank); out.push_str("#### "); }
-                "h5" | "h6" => { push_newline(&mut out, &mut pending_blank); }
-                "li" => { push_newline(&mut out, &mut pending_blank); out.push_str("- "); }
-                "pre" => { in_pre = true; push_newline(&mut out, &mut pending_blank); out.push_str("```\n"); }
+                "h1" => {
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("# ");
+                }
+                "h2" => {
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("## ");
+                }
+                "h3" => {
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("### ");
+                }
+                "h4" => {
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("#### ");
+                }
+                "h5" | "h6" => {
+                    push_newline(&mut out, &mut pending_blank);
+                }
+                "li" => {
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("- ");
+                }
+                "pre" => {
+                    in_pre = true;
+                    push_newline(&mut out, &mut pending_blank);
+                    out.push_str("```\n");
+                }
                 "code" if !in_pre => out.push('`'),
                 "b" | "strong" => out.push_str("**"),
-                "i" | "em" => out.push_str("*"),
+                "i" | "em" => out.push('*'),
                 "a" => {
                     // [text](href) — href remembered until the closing tag.
                     pending_link_href = attr(&lower, "href");
@@ -138,8 +176,8 @@ pub fn to_markdown(html: &str) -> String {
     let mut clean = String::from(trimmed);
     // Collapse 3+ blank lines to one.
     clean.push('\n');
-    let collapsed = collapse_blank_lines(&clean);
-    collapsed
+
+    collapse_blank_lines(&clean)
 }
 
 fn push_newline(out: &mut String, pending_blank: &mut bool) {
@@ -230,9 +268,8 @@ fn attr(lower: &str, key: &str) -> Option<String> {
             return Some(tok.trim_matches(['"', '\'']).to_string());
         }
         if let Some(rest) = tok.strip_prefix(key) {
-            if rest.starts_with('=') {
-                let v = &rest[1..];
-                let v = v.trim_matches(['"', '\'']);
+            if let Some(eq) = rest.strip_prefix('=') {
+                let v = eq.trim_matches(['"', '\'']);
                 if v.is_empty() {
                     want_val = true;
                 } else {

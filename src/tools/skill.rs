@@ -4,10 +4,10 @@
 
 use std::fs;
 
-use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
+use anyhow::{bail, Context, Result};
+use serde_json::{json, Value};
 
-use super::{ToolContext, arg};
+use super::{arg, ToolContext};
 
 pub fn skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let action = arg(args, "action").unwrap_or("list");
@@ -18,7 +18,9 @@ pub fn skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
                 if !dir.is_dir() {
                     continue;
                 }
-                let Ok(entries) = fs::read_dir(&dir) else { continue };
+                let Ok(entries) = fs::read_dir(&dir) else {
+                    continue;
+                };
                 for entry in entries.flatten() {
                     if !entry.path().is_dir() {
                         continue;
@@ -59,13 +61,16 @@ pub fn install_skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let source = arg(args, "source").ok_or_else(|| anyhow::anyhow!("missing `source`"))?;
     let src = ctx.resolve(source);
     if !src.join("SKILL.md").is_file() {
-        bail!("source must be a directory containing SKILL.md: {}", src.display());
+        bail!(
+            "source must be a directory containing SKILL.md: {}",
+            src.display()
+        );
     }
-    let name = arg(args, "name")
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| {
-            src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "skill".into())
-        });
+    let name = arg(args, "name").map(|n| n.to_string()).unwrap_or_else(|| {
+        src.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "skill".into())
+    });
     let dest = ctx.workspace.join(".fx").join("skills").join(&name);
     fs::create_dir_all(&dest).with_context(|| format!("creating {}", dest.display()))?;
     copy_dir(&src, &dest)?;
@@ -87,8 +92,17 @@ fn extract_description(text: &str) -> Option<String> {
     let front = text.lines().take(15).collect::<Vec<_>>().join("\n");
     let desc_start = front.find("description:")?;
     let after = &front[desc_start + "description:".len()..];
-    let desc = after.lines().next()?.trim().trim_matches('"').trim_matches('\'');
-    if desc.is_empty() { None } else { Some(desc.to_string()) }
+    let desc = after
+        .lines()
+        .next()?
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'');
+    if desc.is_empty() {
+        None
+    } else {
+        Some(desc.to_string())
+    }
 }
 
 fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> Result<()> {

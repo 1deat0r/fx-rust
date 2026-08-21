@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookKind {
@@ -143,7 +143,10 @@ pub enum HookOutcome {
 /// workspace hook dir. Later dirs (workspace) take precedence in ordering.
 pub fn discover(kind: HookKind, workspace: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for base in [crate::config::fx_home().join("hooks"), workspace.join(".fx/hooks")] {
+    for base in [
+        crate::config::fx_home().join("hooks"),
+        workspace.join(".fx/hooks"),
+    ] {
         for cand in [
             base.join(kind.event_name()),
             base.join(kind.event_name().to_lowercase()),
@@ -160,18 +163,19 @@ pub fn discover(kind: HookKind, workspace: &Path) -> Vec<PathBuf> {
 /// Run every hook script for `kind`. `input` is the root JSON object written
 /// to each hook's stdin. `base_input` is augmented with hook_event_name.
 /// Returns aggregated outcomes; a Block or Rewrite ends evaluation early.
-pub fn run(
-    kind: HookKind,
-    input: Value,
-    workspace: &Path,
-    timeout_secs: u64,
-) -> Vec<HookOutcome> {
+pub fn run(kind: HookKind, input: Value, workspace: &Path, timeout_secs: u64) -> Vec<HookOutcome> {
     let mut outcomes = Vec::new();
     for script in discover(kind, workspace) {
         let mut payload = input.clone();
         if let Value::Object(map) = &mut payload {
-            map.insert("hook_event_name".into(), Value::String(kind.event_name().into()));
-            map.insert("hook_script".into(), Value::String(script.display().to_string()));
+            map.insert(
+                "hook_event_name".into(),
+                Value::String(kind.event_name().into()),
+            );
+            map.insert(
+                "hook_script".into(),
+                Value::String(script.display().to_string()),
+            );
         }
         let result = run_one(&script, payload, timeout_secs);
         match result {
@@ -222,18 +226,32 @@ fn run_one(script: &Path, input: Value, timeout_secs: u64) -> Result<HookOutcome
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout);
         let parsed: Value = serde_json::from_str(raw.trim()).unwrap_or(Value::Null);
-        let decision = parsed.get("decision").and_then(|d| d.as_str()).unwrap_or("allow");
+        let decision = parsed
+            .get("decision")
+            .and_then(|d| d.as_str())
+            .unwrap_or("allow");
         match decision {
             "block" => Ok(HookOutcome::Block {
-                reason: parsed.get("reason").and_then(|r| r.as_str()).unwrap_or("blocked by hook").into(),
+                reason: parsed
+                    .get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("blocked by hook")
+                    .into(),
             }),
             "rewrite" => Ok(HookOutcome::Rewrite {
-                args: parsed.get("args").cloned().unwrap_or(Value::Object(Default::default())),
+                args: parsed
+                    .get("args")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default())),
             }),
             _ => Ok(HookOutcome::Allow),
         }
     } else {
-        anyhow::bail!("hook {} exited {:?}", script.display(), output.status.code());
+        anyhow::bail!(
+            "hook {} exited {:?}",
+            script.display(),
+            output.status.code()
+        );
     }
 }
 
@@ -276,14 +294,17 @@ fn base_input(workspace: &Path, session_id: Option<&str>) -> Value {
 
 fn with_invocation(mut v: Value, scope_kind: ScopeKind, turn_id: Option<u64>) -> Value {
     if let Value::Object(map) = &mut v {
-        map.insert("invocation".into(), json!({
-            "scope": {
-                "kind": scope_kind.as_str(),
-                "workspace_root": map.get("workspace").cloned().unwrap_or(Value::Null),
-                "session_id": map.get("session_id").cloned().unwrap_or(Value::Null),
-            },
-            "turn_id": turn_id,
-        }));
+        map.insert(
+            "invocation".into(),
+            json!({
+                "scope": {
+                    "kind": scope_kind.as_str(),
+                    "workspace_root": map.get("workspace").cloned().unwrap_or(Value::Null),
+                    "session_id": map.get("session_id").cloned().unwrap_or(Value::Null),
+                },
+                "turn_id": turn_id,
+            }),
+        );
     }
     v
 }
@@ -304,11 +325,7 @@ pub fn post_turn_end_input(workspace: &Path, session_id: Option<&str>, steps: us
 
 /// Build the AttentionRequired event input (fx: an unresolved permission /
 /// interrupt the user must resolve).
-pub fn attention_required_input(
-    workspace: &Path,
-    session_id: Option<&str>,
-    reason: &str,
-) -> Value {
+pub fn attention_required_input(workspace: &Path, session_id: Option<&str>, reason: &str) -> Value {
     attention_required_input_kind(workspace, session_id, reason, AttentionKind::Permission)
 }
 
@@ -333,7 +350,10 @@ mod tests {
         let defs = definitions();
         assert_eq!(defs.len(), 4);
         let names: Vec<_> = defs.iter().map(|d| d.lifecycle_event).collect();
-        assert_eq!(names, vec!["PreToolUse", "Stop", "PostTurnEnd", "AttentionRequired"]);
+        assert_eq!(
+            names,
+            vec!["PreToolUse", "Stop", "PostTurnEnd", "AttentionRequired"]
+        );
         for d in &defs {
             assert!(!d.agent_loop_point.is_empty());
             assert!(!d.purpose.is_empty());

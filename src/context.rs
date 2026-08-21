@@ -94,7 +94,9 @@ mod tests {
     #[test]
     fn rough_estimate_is_nonzero_for_text() {
         assert_eq!(estimate_tokens(""), 0);
-        let m = estimate_tokens("hello world this is a test sentence that should be roughly a few tokens");
+        let m = estimate_tokens(
+            "hello world this is a test sentence that should be roughly a few tokens",
+        );
         assert!(m > 0);
     }
 
@@ -104,10 +106,13 @@ mod tests {
             role: "user".into(),
             content: vec![
                 ContentBlock::Text("look at this".into()),
-                ContentBlock::Image { media_type: "image/png".into(), data: "AAAA".into() },
+                ContentBlock::Image {
+                    media_type: "image/png".into(),
+                    data: "AAAA".into(),
+                },
             ],
         };
-        let with_img = estimate_messages(&[msg.clone()]);
+        let with_img = estimate_messages(std::slice::from_ref(&msg));
         let text_only = estimate_messages(&[Message {
             content: vec![ContentBlock::Text("look at this".into())],
             ..msg

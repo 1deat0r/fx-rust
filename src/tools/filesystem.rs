@@ -3,19 +3,22 @@
 
 use std::fs;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use globset::Glob;
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::{ToolContext, arg, path_arg};
+use super::{arg, path_arg, ToolContext};
 
 // ---------------------------------------------------------------- read_file
 pub fn read_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let path = path_arg(ctx, args, "file_path")?;
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let offset = args.get("offset").and_then(|v| v.as_i64()).unwrap_or(1).max(1) as usize;
+    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .max(1) as usize;
     let limit = args.get("limit").and_then(|v| v.as_i64());
 
     let mut out = String::new();
@@ -52,8 +55,7 @@ pub fn write_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating parent dirs for {}", path.display()))?;
     }
-    fs::write(&path, content)
-        .with_context(|| format!("writing {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     Ok(json!({
         "result": "ok",
         "path": path.display().to_string(),
@@ -68,8 +70,14 @@ pub fn edit_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
         .get("old_string")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing required argument `old_string`"))?;
-    let new = args.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
-    let replace_all = args.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+    let new = args
+        .get("new_string")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let replace_all = args
+        .get("replace_all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     if !replace_all {
@@ -88,12 +96,16 @@ pub fn edit_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
         }
         let updated = text.replace(old, new);
         fs::write(&path, &updated).with_context(|| format!("writing {}", path.display()))?;
-        Ok(json!({ "result": "ok", "path": path.display().to_string(), "replaced": matches, "bytes": updated.len() }))
+        Ok(
+            json!({ "result": "ok", "path": path.display().to_string(), "replaced": matches, "bytes": updated.len() }),
+        )
     } else {
         let count = text.matches(old).count();
         let updated = text.replace(old, new);
         fs::write(&path, &updated).with_context(|| format!("writing {}", path.display()))?;
-        Ok(json!({ "result": "ok", "path": path.display().to_string(), "replaced": count, "bytes": updated.len() }))
+        Ok(
+            json!({ "result": "ok", "path": path.display().to_string(), "replaced": count, "bytes": updated.len() }),
+        )
     }
 }
 
@@ -115,20 +127,27 @@ pub fn rename_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating parent dirs for {}", to.display()))?;
     }
-    fs::rename(&from, &to).with_context(|| format!("renaming {} -> {}", from.display(), to.display()))?;
-    Ok(json!({ "result": "ok", "from": from.display().to_string(), "to": to.display().to_string() }))
+    fs::rename(&from, &to)
+        .with_context(|| format!("renaming {} -> {}", from.display(), to.display()))?;
+    Ok(
+        json!({ "result": "ok", "from": from.display().to_string(), "to": to.display().to_string() }),
+    )
 }
 
 pub fn copy_file(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let from = path_arg(ctx, args, "file_path")?;
-    let to_raw = arg(args, "destination").ok_or_else(|| anyhow::anyhow!("missing `destination`"))?;
+    let to_raw =
+        arg(args, "destination").ok_or_else(|| anyhow::anyhow!("missing `destination`"))?;
     let to = ctx.resolve(to_raw);
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating parent dirs for {}", to.display()))?;
     }
-    fs::copy(&from, &to).with_context(|| format!("copying {} -> {}", from.display(), to.display()))?;
-    Ok(json!({ "result": "ok", "from": from.display().to_string(), "to": to.display().to_string() }))
+    fs::copy(&from, &to)
+        .with_context(|| format!("copying {} -> {}", from.display(), to.display()))?;
+    Ok(
+        json!({ "result": "ok", "from": from.display().to_string(), "to": to.display().to_string() }),
+    )
 }
 
 pub fn create_folder(ctx: &ToolContext, args: &Value) -> Result<Value> {
@@ -173,7 +192,7 @@ pub fn file_info(ctx: &ToolContext, args: &Value) -> Result<Value> {
         "is_file": meta.is_file(),
         "is_dir": meta.is_dir(),
         "size": meta.len(),
-        "modified_ms": meta.modified().map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u128).unwrap_or(0)).unwrap_or(0),
+        "modified_ms": meta.modified().map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)).unwrap_or(0),
     }))
 }
 
@@ -209,8 +228,7 @@ pub fn glob_files(ctx: &ToolContext, args: &Value) -> Result<Value> {
         Some(p) => ctx.resolve(p),
         None => ctx.workspace.clone(),
     };
-    let glob = Glob::new(pattern)
-        .map_err(|e| anyhow::anyhow!("invalid glob `{pattern}`: {e}"))?;
+    let glob = Glob::new(pattern).map_err(|e| anyhow::anyhow!("invalid glob `{pattern}`: {e}"))?;
     let matcher = glob.compile_matcher();
 
     let mut matched = Vec::new();
@@ -237,12 +255,16 @@ fn walk(
             .unwrap_or(&path)
             .to_string_lossy()
             .to_string();
-        if rel == ".git" || rel == "node_modules" || rel == "target" || rel == "vendor" || rel == ".venv" {
-            if path.is_dir() {
-                continue;
-            }
+        if (rel == ".git"
+            || rel == "node_modules"
+            || rel == "target"
+            || rel == "vendor"
+            || rel == ".venv")
+            && path.is_dir()
+        {
+            continue;
         }
-        if matcher.is_match(&rel) || matcher.is_match(&path.to_string_lossy().to_string()) {
+        if matcher.is_match(&rel) || matcher.is_match(path.to_string_lossy().to_string()) {
             out.push(rel.clone());
         }
         if path.is_dir() {
@@ -260,14 +282,21 @@ pub fn grep_files(ctx: &ToolContext, args: &Value) -> Result<Value> {
         Some(p) => ctx.resolve(p),
         None => ctx.workspace.clone(),
     };
-    let glob_filter = arg(args, "glob").map(|g| {
-        Glob::new(g).ok().map(|g| g.compile_matcher())
-    }).flatten();
+    let glob_filter =
+        arg(args, "glob").and_then(|g| Glob::new(g).ok().map(|g| g.compile_matcher()));
     let output_mode = arg(args, "output_mode").unwrap_or("content");
 
     let mut results = Vec::new();
     let mut count_total = 0usize;
-    grep_walk(&base, &base, &re, &glob_filter, &mut results, &mut count_total, 0)?;
+    grep_walk(
+        &base,
+        &base,
+        &re,
+        &glob_filter,
+        &mut results,
+        &mut count_total,
+        0,
+    )?;
 
     let summary = json!({
         "pattern": pattern,
@@ -296,19 +325,28 @@ fn grep_walk(
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if matches!(name.as_str(), ".git" | "node_modules" | "target" | "vendor" | ".venv" | ".fx") {
+            if matches!(
+                name.as_str(),
+                ".git" | "node_modules" | "target" | "vendor" | ".venv" | ".fx"
+            ) {
                 continue;
             }
             grep_walk(base, &path, re, glob_filter, out, _count, depth + 1)?;
             continue;
         }
-        let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
+        let rel = path
+            .strip_prefix(base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
         if let Some(gm) = glob_filter {
             if !gm.is_match(&rel) {
                 continue;
             }
         }
-        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
         for (i, line) in text.lines().enumerate() {
             if re.is_match(line) {
                 out.push(json!({
@@ -326,7 +364,7 @@ fn grep_walk(
 fn truncate_line(s: &str) -> String {
     if s.len() > 300 {
         let mut out: String = s.chars().take(300).collect();
-        out.push_str("…");
+        out.push('…');
         out
     } else {
         s.to_string()

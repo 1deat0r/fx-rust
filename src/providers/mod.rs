@@ -14,7 +14,7 @@ pub mod anthropic;
 pub mod gateway;
 pub mod sse;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use serde_json::Value;
 
 use crate::config::Config;
@@ -39,10 +39,20 @@ impl ProviderKind {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ContentBlock {
     Text(String),
-    ToolUse { id: String, name: String, input: Value },
-    ToolResult { id: String, content: String },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        id: String,
+        content: String,
+    },
     /// Base64-encoded image attached to a user turn (vision).
-    Image { media_type: String, data: String },
+    Image {
+        media_type: String,
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -82,10 +92,16 @@ impl Message {
             .collect()
     }
     pub fn user_text(text: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: vec![ContentBlock::Text(text.into())] }
+        Self {
+            role: "user".into(),
+            content: vec![ContentBlock::Text(text.into())],
+        }
     }
     pub fn assistant_text(text: impl Into<String>) -> Self {
-        Self { role: "assistant".into(), content: vec![ContentBlock::Text(text.into())] }
+        Self {
+            role: "assistant".into(),
+            content: vec![ContentBlock::Text(text.into())],
+        }
     }
     pub fn assistant_tool_calls(calls: Vec<(String, String, Value)>) -> Self {
         Self {
@@ -146,11 +162,26 @@ pub enum StreamEvent {
     /// Model chain-of-thought / reasoning text. Displayed as a subtle
     /// indicator (or traced to stderr); never counted as answer text.
     ReasoningDelta(String),
-    ToolCallStart { index: usize, id: String, name: String },
-    ToolCallArgDelta { index: usize, delta: String },
-    ToolCallDone { index: usize, id: String, name: String, input: Value },
+    ToolCallStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    ToolCallArgDelta {
+        index: usize,
+        delta: String,
+    },
+    ToolCallDone {
+        index: usize,
+        id: String,
+        name: String,
+        input: Value,
+    },
     Finish,
-    Usage { input_tokens: Option<u64>, output_tokens: Option<u64> },
+    Usage {
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    },
 }
 
 pub type EventStream = futures_util::stream::BoxStream<'static, Result<StreamEvent>>;
@@ -180,7 +211,7 @@ pub struct ProviderConfig {
 pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
     let model = cfg.model.clone();
 
-    if let Some(kind) = std::env::var("FX_PROVIDER").ok() {
+    if let Ok(kind) = std::env::var("FX_PROVIDER") {
         let kind = match kind.as_str() {
             "gateway" => ProviderKind::Gateway,
             "anthropic" => ProviderKind::Anthropic,
@@ -189,9 +220,11 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
         };
         let (base_url, api_key) = match kind {
             ProviderKind::Gateway => (
-                std::env::var("FX_GATEWAY_BASE_URL").ok()
+                std::env::var("FX_GATEWAY_BASE_URL")
+                    .ok()
                     .or_else(|| std::env::var("AI_GATEWAY_BASE_URL").ok()),
-                std::env::var("AI_GATEWAY_API_KEY").ok()
+                std::env::var("AI_GATEWAY_API_KEY")
+                    .ok()
                     .or_else(|| std::env::var("FX_GATEWAY_API_KEY").ok()),
             ),
             ProviderKind::Anthropic => (
@@ -203,11 +236,20 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
                 std::env::var("AI_API_KEY").ok(),
             ),
         };
-        return Ok(ProviderConfig { provider: kind, model, base_url, api_key });
+        return Ok(ProviderConfig {
+            provider: kind,
+            model,
+            base_url,
+            api_key,
+        });
     }
 
-    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty());
-    let gateway_key = std::env::var("AI_GATEWAY_API_KEY").ok().filter(|s| !s.is_empty());
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let gateway_key = std::env::var("AI_GATEWAY_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
     let base = std::env::var("AI_BASE_URL").ok().filter(|s| !s.is_empty());
 
     let is_anthropic_model = model.starts_with("anthropic/") || model.starts_with("claude-");
@@ -223,7 +265,8 @@ pub fn resolve_provider(cfg: &Config) -> Result<ProviderConfig> {
         return Ok(ProviderConfig {
             provider: ProviderKind::Gateway,
             model,
-            base_url: std::env::var("FX_GATEWAY_BASE_URL").ok()
+            base_url: std::env::var("FX_GATEWAY_BASE_URL")
+                .ok()
                 .or_else(|| std::env::var("AI_GATEWAY_BASE_URL").ok()),
             api_key: Some(key),
         });
@@ -282,7 +325,9 @@ pub async fn chat(
         match ev? {
             StreamEvent::TextDelta(t) => text.push_str(&t),
             StreamEvent::ReasoningDelta(_) => {} // reasoning never enters chat() output
-            StreamEvent::ToolCallStart { index, id, name, .. } => {
+            StreamEvent::ToolCallStart {
+                index, id, name, ..
+            } => {
                 pending.push((index, id, name, String::new()));
             }
             StreamEvent::ToolCallArgDelta { index, delta } => {
@@ -290,14 +335,22 @@ pub async fn chat(
                     c.3.push_str(&delta);
                 }
             }
-            StreamEvent::ToolCallDone { index, id, name, input } => {
+            StreamEvent::ToolCallDone {
+                index,
+                id,
+                name,
+                input,
+            } => {
                 if let Some(c) = pending.iter_mut().find(|c| c.0 == index) {
                     c.1 = id;
                     c.2 = name;
                     c.3 = serde_json::to_string(&input).unwrap_or_default();
                 }
             }
-            StreamEvent::Usage { input_tokens, output_tokens } => {
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+            } => {
                 usage.input_tokens = input_tokens.unwrap_or(0);
                 usage.output_tokens = output_tokens.unwrap_or(0);
             }

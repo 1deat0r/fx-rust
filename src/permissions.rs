@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
 
@@ -232,7 +232,11 @@ fn rule_priority(r: Rule) -> u8 {
 
 impl Permissions {
     pub fn new(mode: PermissionMode, rules: BTreeMap<String, ToolRule>) -> Self {
-        Self { mode, rules, grants: GrantStore::default() }
+        Self {
+            mode,
+            rules,
+            grants: GrantStore::default(),
+        }
     }
 
     #[allow(dead_code)]
@@ -247,11 +251,16 @@ impl Permissions {
             return Decision::Allow;
         }
         let sensitive = needs_approval(req.tool_name);
-        if !sensitive && self.rules.get("*").is_none() && self.rules.get(kind).is_none() && self.rules.get(req.tool_name).is_none() {
+        if !sensitive
+            && !self.rules.contains_key("*")
+            && !self.rules.contains_key(kind)
+            && !self.rules.contains_key(req.tool_name)
+        {
             return Decision::Allow;
         }
 
-        let rel_target = req.target
+        let rel_target = req
+            .target
             .strip_prefix(&req.workspace.to_string_lossy().to_string())
             .map(|r| r.trim_start_matches('/'))
             .filter(|r| !r.is_empty());
@@ -264,16 +273,26 @@ impl Permissions {
             if let Some(rule) = self.rules.get(key) {
                 match rule {
                     ToolRule::Whole(r) => {
-                        consider(&mut best, Candidate { spec: 0, key_rank, rule: *r });
+                        consider(
+                            &mut best,
+                            Candidate {
+                                spec: 0,
+                                key_rank,
+                                rule: *r,
+                            },
+                        );
                     }
                     ToolRule::Patterns(patterns) => {
                         for (pattern, r) in patterns {
                             if glob_matches(pattern, req.target, rel_target) {
-                                consider(&mut best, Candidate {
-                                    spec: pattern.chars().count(),
-                                    key_rank,
-                                    rule: *r,
-                                });
+                                consider(
+                                    &mut best,
+                                    Candidate {
+                                        spec: pattern.chars().count(),
+                                        key_rank,
+                                        rule: *r,
+                                    },
+                                );
                             }
                         }
                     }
@@ -293,10 +312,24 @@ impl Permissions {
         }
 
         match best {
-            Some(Candidate { rule: Rule::Allow, .. }) => Decision::Allow,
-            Some(Candidate { rule: Rule::Deny, .. }) => Decision::Deny(DENY_TOOL),
-            Some(Candidate { rule: Rule::Ask, .. }) | None if sensitive => Decision::Unresolved,
-            Some(Candidate { rule: Rule::Ask, .. }) | None => Decision::Allow,
+            Some(Candidate {
+                rule: Rule::Allow, ..
+            }) => Decision::Allow,
+            Some(Candidate {
+                rule: Rule::Deny, ..
+            }) => Decision::Deny(DENY_TOOL),
+            Some(Candidate {
+                rule: Rule::Ask, ..
+            })
+            | None
+                if sensitive =>
+            {
+                Decision::Unresolved
+            }
+            Some(Candidate {
+                rule: Rule::Ask, ..
+            })
+            | None => Decision::Allow,
         }
     }
 
@@ -357,16 +390,28 @@ mod tests {
     #[test]
     fn read_tools_are_always_allowed_in_default_policy() {
         let p = Permissions::default();
-        assert_eq!(p.decide(&req("read_file", "/ws/src/main.rs", "/ws")), Decision::Allow);
-        assert_eq!(p.decide(&req("glob_files", "/ws/**", "/ws")), Decision::Allow);
+        assert_eq!(
+            p.decide(&req("read_file", "/ws/src/main.rs", "/ws")),
+            Decision::Allow
+        );
+        assert_eq!(
+            p.decide(&req("glob_files", "/ws/**", "/ws")),
+            Decision::Allow
+        );
         assert_eq!(p.decide(&req("web_search", "x", "/ws")), Decision::Allow);
     }
 
     #[test]
     fn sensitive_tools_are_unresolved_by_default() {
         let p = Permissions::default();
-        assert_eq!(p.decide(&req("run_command", "rm -rf /", "/ws")), Decision::Unresolved);
-        assert_eq!(p.decide(&req("write_file", "/ws/a.txt", "/ws")), Decision::Unresolved);
+        assert_eq!(
+            p.decide(&req("run_command", "rm -rf /", "/ws")),
+            Decision::Unresolved
+        );
+        assert_eq!(
+            p.decide(&req("write_file", "/ws/a.txt", "/ws")),
+            Decision::Unresolved
+        );
     }
 
     #[test]
@@ -380,8 +425,14 @@ mod tests {
             ]),
         );
         let p = Permissions::new(PermissionMode::Ask, rules);
-        assert_eq!(p.decide(&req("edit_file", "/ws/docs/readme.md", "/ws")), Decision::Allow);
-        assert_eq!(p.decide(&req("edit_file", "/ws/src/main.rs", "/ws")), Decision::Deny(DENY_TOOL));
+        assert_eq!(
+            p.decide(&req("edit_file", "/ws/docs/readme.md", "/ws")),
+            Decision::Allow
+        );
+        assert_eq!(
+            p.decide(&req("edit_file", "/ws/src/main.rs", "/ws")),
+            Decision::Deny(DENY_TOOL)
+        );
     }
 
     #[test]
@@ -392,8 +443,14 @@ mod tests {
             ToolRule::Patterns(vec![("git *".to_string(), Rule::Allow)]),
         );
         let p = Permissions::new(PermissionMode::Ask, rules);
-        assert_eq!(p.decide(&req("run_command", "git status", "/ws")), Decision::Allow);
-        assert_eq!(p.decide(&req("run_command", "npm install", "/ws")), Decision::Unresolved);
+        assert_eq!(
+            p.decide(&req("run_command", "git status", "/ws")),
+            Decision::Allow
+        );
+        assert_eq!(
+            p.decide(&req("run_command", "npm install", "/ws")),
+            Decision::Unresolved
+        );
     }
 
     #[test]
@@ -407,8 +464,14 @@ mod tests {
             ]),
         );
         let p = Permissions::new(PermissionMode::Ask, rules);
-        assert_eq!(p.decide(&req("run_command", "git push origin main", "/ws")), Decision::Deny(DENY_TOOL));
-        assert_eq!(p.decide(&req("run_command", "git status", "/ws")), Decision::Allow);
+        assert_eq!(
+            p.decide(&req("run_command", "git push origin main", "/ws")),
+            Decision::Deny(DENY_TOOL)
+        );
+        assert_eq!(
+            p.decide(&req("run_command", "git status", "/ws")),
+            Decision::Allow
+        );
     }
 
     #[test]
@@ -416,22 +479,34 @@ mod tests {
         let mut rules = BTreeMap::new();
         rules.insert("*".to_string(), ToolRule::Whole(Rule::Ask));
         let p = Permissions::new(PermissionMode::Ask, rules);
-        assert_eq!(p.decide(&req("write_file", "/ws/a", "/ws")), Decision::Unresolved);
+        assert_eq!(
+            p.decide(&req("write_file", "/ws/a", "/ws")),
+            Decision::Unresolved
+        );
     }
 
     #[test]
     fn session_grant_resolves_unresolved() {
         let mut p = Permissions::default();
         p.grants.allow("bash", "npm *");
-        assert_eq!(p.decide(&req("run_command", "npm install", "/ws")), Decision::Allow);
-        assert_eq!(p.decide(&req("run_command", "rm -rf /", "/ws")), Decision::Unresolved);
+        assert_eq!(
+            p.decide(&req("run_command", "npm install", "/ws")),
+            Decision::Allow
+        );
+        assert_eq!(
+            p.decide(&req("run_command", "rm -rf /", "/ws")),
+            Decision::Unresolved
+        );
     }
 
     #[test]
     fn directory_grant_sugar() {
         let mut p = Permissions::default();
         p.grants.allow("edit", "/ws/");
-        assert_eq!(p.decide(&req("edit_file", "/ws/src/main.rs", "/ws")), Decision::Allow);
+        assert_eq!(
+            p.decide(&req("edit_file", "/ws/src/main.rs", "/ws")),
+            Decision::Allow
+        );
     }
 }
 
@@ -460,10 +535,35 @@ impl Sandbox {
         } else {
             self.workspace.join(p)
         };
-        let mut base = std::iter::once(self.workspace.clone())
-            .chain(self.additional.iter().cloned());
+        // Lexically resolve `.`/`..`; paths that escape the mount point are
+        // not in the sandbox. Without this, `/ws/../../etc/passwd` passes
+        // a naive `starts_with("/ws")` check.
+        let Some(abs) = sandbox_normalize(&abs) else {
+            return false;
+        };
+        let mut base =
+            std::iter::once(self.workspace.clone()).chain(self.additional.iter().cloned());
         base.any(|allowed| abs.starts_with(&allowed))
     }
+}
+
+/// Resolve `.` / `..` components lexically. Returns `None` when the path
+/// would escape the root (a parent dir above `/`).
+fn sandbox_normalize(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
 }
 
 // ------------------------------------------------------------ auto classifier
@@ -508,7 +608,7 @@ pub fn auto_classify(req: &PermissionRequest, sandbox: &Sandbox) -> AutoDecision
 }
 
 fn auto_classify_bash(req: &PermissionRequest, sandbox: &Sandbox) -> AutoDecision {
-    use crate::shell_command::{CommandClass, classify};
+    use crate::shell_command::{classify, CommandClass};
     let eff = classify(req.target);
     match eff.class {
         CommandClass::ReadOnly => AutoDecision::Allow,
@@ -527,10 +627,20 @@ fn auto_classify_bash(req: &PermissionRequest, sandbox: &Sandbox) -> AutoDecisio
             AutoDecision::Allow
         }
         CommandClass::Network => {
-            // Read-only network (curl GET, git fetch/pull) is fine; pushes and
-            // POST bodies are not auto-approved.
+            // Read-only network (curl GET, git fetch/pull) is fine; pushes,
+            // POST bodies, and writes that land outside the sandbox are not.
             if eff.destructive {
                 AutoDecision::Deny("network write/push is not auto-approved")
+            } else if eff.writes {
+                let outside = eff.paths.iter().any(|p| {
+                    let expanded = p.strip_prefix('~').unwrap_or(p);
+                    std::path::Path::new(expanded).is_absolute() && !sandbox.allows(expanded)
+                });
+                if outside {
+                    AutoDecision::Deny("network command writes outside the sandbox")
+                } else {
+                    AutoDecision::Allow
+                }
             } else if eff.raw.is_empty() {
                 AutoDecision::Deny("network command is not auto-approved")
             } else {
@@ -579,6 +689,17 @@ mod test_auto {
     }
 
     #[test]
+    fn sandbox_rejects_parentdir_escape() {
+        // /ws/../../etc/passwd must NOT satisfy the lexical starts_with check.
+        let s = sb("/ws");
+        assert!(!s.allows("/ws/../../etc/passwd"));
+        assert!(!s.allows("../etc/passwd"));
+        assert!(s.allows("/ws/a/../b.txt")); // stays inside after normalization
+        assert!(s.allows("/ws"));
+        assert!(s.allows("/ws/src/x.rs"));
+    }
+
+    #[test]
     fn sandbox_none_allows_everything() {
         let s = Sandbox {
             mode: SandboxMode::None,
@@ -591,40 +712,112 @@ mod test_auto {
     #[test]
     fn read_tools_allowed_in_auto() {
         let s = sb("/ws");
-        assert_eq!(auto_classify(&req("read_file", "/ws/a.txt", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("web_search", "x", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("memory", "", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(
+            auto_classify(&req("read_file", "/ws/a.txt", "/ws"), &s),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("web_search", "x", "/ws"), &s),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("memory", "", "/ws"), &s),
+            AutoDecision::Allow
+        );
     }
 
     #[test]
     fn edits_inside_sandbox_allowed_outside_denied() {
         let s = sb("/ws");
-        assert_eq!(auto_classify(&req("write_file", "/ws/a.txt", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("delete_file", "/etc/passwd", "/ws"), &s), AutoDecision::Deny("edits outside the sandbox are not auto-approved"));
+        assert_eq!(
+            auto_classify(&req("write_file", "/ws/a.txt", "/ws"), &s),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("delete_file", "/etc/passwd", "/ws"), &s),
+            AutoDecision::Deny("edits outside the sandbox are not auto-approved")
+        );
     }
 
     #[test]
     fn bash_readonly_allowed() {
         let s = sb("/ws");
-        assert_eq!(auto_classify(&req("run_command", "git status", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("run_command", "ls -la", "/ws"), &s), AutoDecision::Allow);
+        assert_eq!(
+            auto_classify(&req("run_command", "git status", "/ws"), &s),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "ls -la", "/ws"), &s),
+            AutoDecision::Allow
+        );
     }
 
     #[test]
     fn bash_writes_confined() {
         let s = sb("/ws");
-        assert_eq!(auto_classify(&req("run_command", "cp a.txt b.txt", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("run_command", "rm -rf /etc", "/ws"), &s), AutoDecision::Deny("command writes outside the sandbox"));
-        assert_eq!(auto_classify(&req("run_command", "sudo apt update", "/ws"), &s), AutoDecision::Deny("dangerous command is not auto-approved"));
-        assert_eq!(auto_classify(&req("run_command", "curl -s https://example.com", "/ws"), &s), AutoDecision::Allow);
-        assert_eq!(auto_classify(&req("run_command", "git push origin main", "/ws"), &s), AutoDecision::Deny("network write/push is not auto-approved"));
-        assert_eq!(auto_classify(&req("run_command", "npm install", "/ws"), &s), AutoDecision::Deny("package/tool installation is not auto-approved"));
-        assert_eq!(auto_classify(&req("run_command", "vim x", "/ws"), &s), AutoDecision::Deny("interactive/long-running process is not auto-approved"));
+        assert_eq!(
+            auto_classify(&req("run_command", "cp a.txt b.txt", "/ws"), &s),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "rm -rf /etc", "/ws"), &s),
+            AutoDecision::Deny("command writes outside the sandbox")
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "sudo apt update", "/ws"), &s),
+            AutoDecision::Deny("dangerous command is not auto-approved")
+        );
+        assert_eq!(
+            auto_classify(
+                &req("run_command", "curl -s https://example.com", "/ws"),
+                &s
+            ),
+            AutoDecision::Allow
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "git push origin main", "/ws"), &s),
+            AutoDecision::Deny("network write/push is not auto-approved")
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "npm install", "/ws"), &s),
+            AutoDecision::Deny("package/tool installation is not auto-approved")
+        );
+        assert_eq!(
+            auto_classify(&req("run_command", "vim x", "/ws"), &s),
+            AutoDecision::Deny("interactive/long-running process is not auto-approved")
+        );
+    }
+
+    #[test]
+    fn network_write_outside_sandbox_denied() {
+        let s = sb("/ws");
+        // curl -o /tmp/x writes outside the sandbox -> deny, not allow.
+        let r = auto_classify(
+            &req(
+                "run_command",
+                "curl -o /tmp/x https://example.com/data",
+                "/ws",
+            ),
+            &s,
+        );
+        assert_eq!(
+            r,
+            AutoDecision::Deny("network command writes outside the sandbox")
+        );
+        // curl install-script to workspace is fine (read-only fetch).
+        let r2 = auto_classify(
+            &req("run_command", "curl -s https://example.com/data", "/ws"),
+            &s,
+        );
+        assert_eq!(r2, AutoDecision::Allow);
     }
 
     #[test]
     fn unknown_undetermined() {
         let s = sb("/ws");
-        assert_eq!(auto_classify(&req("run_command", "frobnicate --all", "/ws"), &s), AutoDecision::Undetermined);
+        assert_eq!(
+            auto_classify(&req("run_command", "frobnicate --all", "/ws"), &s),
+            AutoDecision::Undetermined
+        );
     }
 }

@@ -50,7 +50,11 @@ fn mini_server() -> McpServerConfig {
 #[test]
 fn stdio_handshake_list_and_call() {
     let cfg = mini_server();
-    if std::process::Command::new("python3").arg("--version").output().is_err() {
+    if std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("python3 unavailable; skipping");
         return;
     }
@@ -64,5 +68,8 @@ fn stdio_handshake_list_and_call() {
 
     // Prefix naming helpers.
     assert_eq!(mcp::prefixed_name("mini", "echo"), "mcp__mini__echo");
-    assert_eq!(mcp::parse_prefixed("mcp__mini__echo"), Some(("mini".to_string(), "echo".to_string())));
+    assert_eq!(
+        mcp::parse_prefixed("mcp__mini__echo"),
+        Some(("mini".to_string(), "echo".to_string()))
+    );
 }

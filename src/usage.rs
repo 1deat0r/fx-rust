@@ -32,7 +32,9 @@ pub struct UsageStore {
 
 impl UsageStore {
     pub fn new() -> Self {
-        Self { path: Some(fx_home().join("usage.jsonl")) }
+        Self {
+            path: Some(fx_home().join("usage.jsonl")),
+        }
     }
 
     /// Append one record to the sidecar. Failures are non-fatal (logged).
@@ -54,7 +56,9 @@ impl UsageStore {
 
     /// Read all records that are parseable (corrupt lines are skipped).
     pub fn read_all(&self) -> Vec<UsageRecord> {
-        let Some(path) = &self.path else { return Vec::new() };
+        let Some(path) = &self.path else {
+            return Vec::new();
+        };
         let Ok(data) = std::fs::read_to_string(path) else {
             return Vec::new();
         };
@@ -123,7 +127,12 @@ pub fn parse_period(period: &str) -> u128 {
             _ => None,
         }
     };
-    let (num, unit) = if p.ends_with('h') || p.ends_with('d') || p.ends_with('w') || p.ends_with('m') || p.ends_with('s') {
+    let (num, unit) = if p.ends_with('h')
+        || p.ends_with('d')
+        || p.ends_with('w')
+        || p.ends_with('m')
+        || p.ends_with('s')
+    {
         (p[..p.len() - 1].to_string(), p.chars().last().unwrap())
     } else {
         (p.clone(), 'd')
@@ -141,7 +150,9 @@ mod tests {
     fn aggregate_counts_records() {
         let dir = std::env::temp_dir().join(format!("fxrs-usage-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let store = UsageStore { path: Some(dir.join("usage.jsonl")) };
+        let store = UsageStore {
+            path: Some(dir.join("usage.jsonl")),
+        };
         for i in 0..3 {
             store
                 .record(&UsageRecord {

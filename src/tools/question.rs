@@ -1,10 +1,10 @@
 //! ask_user_question: prompt the human for input mid-task (interactive only).
 
 use anyhow::{bail, Result};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
-use super::{ToolContext, arg};
+use super::{arg, ToolContext};
 
 pub fn ask_user_question(ctx: &ToolContext, args: &Value) -> Result<Value> {
     if !ctx.interactive {
@@ -28,7 +28,7 @@ pub fn ask_user_question(ctx: &ToolContext, args: &Value) -> Result<Value> {
         // Use stdout for the question so it lands in the transcript stream.
         writeln!(stdout, "\n\x1b[36mƒ {question}\x1b[0m")?;
         if !options.is_empty() {
-            for (_i, opt) in options.iter().enumerate() {
+            for opt in options.iter() {
                 writeln!(stdout, "   \x1b[90m[{{i+1}}]\x1b[0m {opt}")?;
             }
             writeln!(stdout, "   \x1b[90m[number or free text]\x1b[0m")?;

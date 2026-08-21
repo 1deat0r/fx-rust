@@ -41,7 +41,10 @@ fn cli_usage_roundtrip_with_fx_home() {
         .expect("fxrs usage runs");
     assert!(out.status.success(), "usage exited {:?}", out.status);
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("turns: 0"), "expected zero usage, got: {text}");
+    assert!(
+        text.contains("turns: 0"),
+        "expected zero usage, got: {text}"
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -62,7 +65,10 @@ fn cli_doctor_reports_missing_endpoint() {
         .expect("fxrs doctor runs");
     assert!(!out.status.success(), "doctor should fail with no endpoint");
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("FAIL"), "expected FAIL in doctor output: {text}");
+    assert!(
+        text.contains("FAIL"),
+        "expected FAIL in doctor output: {text}"
+    );
     std::env::remove_var("FX_HOME");
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&ws);
@@ -79,7 +85,7 @@ fn cli_version_and_unknown_command() {
 fn slash_router_and_shell_classifier_integration() {
     use fxrs::permissions::{auto_classify, AutoDecision, PermissionRequest, Sandbox};
     use fxrs::shell_command::{classify, CommandClass};
-    use fxrs::slash_commands::{parse, is_slash, Slash};
+    use fxrs::slash_commands::{is_slash, parse, Slash};
 
     // Router
     assert_eq!(parse("/usage 24h"), Some(Slash::Usage(Some("24h".into()))));
@@ -122,8 +128,14 @@ fn cli_settings_renders_catalog_with_fx_home() {
     assert!(out.status.success(), "settings exited {:?}", out.status);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("model"), "catalog missing model: {text}");
-    assert!(text.contains("permission_mode"), "catalog missing permission_mode: {text}");
-    assert!(text.contains("mcpServers"), "catalog missing mcpServers: {text}");
+    assert!(
+        text.contains("permission_mode"),
+        "catalog missing permission_mode: {text}"
+    );
+    assert!(
+        text.contains("mcpServers"),
+        "catalog missing mcpServers: {text}"
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -168,9 +180,14 @@ fn cli_session_json_lifecycle() {
         .args(["session", "stest-1", "--json"])
         .output()
         .expect("fxrs session --json runs");
-    assert!(out.status.success(), "session --json exited {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "session --json exited {:?}",
+        out.status
+    );
     let text = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&text).expect("session --json output parses");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).expect("session --json output parses");
     assert_eq!(parsed["id"], "stest-1");
     assert_eq!(parsed["usage"]["total_tokens"], 15);
     assert_eq!(parsed["schema_version"], 2);
@@ -185,7 +202,8 @@ fn cli_session_json_lifecycle() {
         .args(["sessions", "--json"])
         .output()
         .unwrap();
-    let arr: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out2.stdout)).unwrap();
+    let arr: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out2.stdout)).unwrap();
     assert_eq!(arr.as_array().map(|a| a.len()), Some(1));
 
     // delete

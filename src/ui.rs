@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use crate::agent::{self, AgentRequest};
 use crate::config::Config;
@@ -143,7 +143,10 @@ pub async fn run_interactive(
     resume: Option<String>,
     trace: bool,
 ) -> Result<()> {
-    let human = InteractiveHuman { quiet: false, trace };
+    let human = InteractiveHuman {
+        quiet: false,
+        trace,
+    };
     let provider = providers::resolve_provider(&config)?;
     eprintln!(
         "\x1b[1;36mƒx\x1b[0m rust port (\x1b[36m{}\x1b[0m) — workspace \x1b[90m{}\x1b[0m\n  model \x1b[36m{}\x1b[0m · permissions \x1b[36m{:?}\x1b[0m · type \x1b[32m/help\x1b[0m",
@@ -176,13 +179,20 @@ pub async fn run_interactive(
             use crate::slash_commands::Slash;
             match cmd {
                 Slash::History(limit) => {
-                    let n = limit.and_then(|s| s.parse::<usize>().ok()).unwrap_or(20).min(200);
+                    let n = limit
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(20)
+                        .min(200);
                     let recs = crate::history::HistoryStore::new().query(None, n);
                     if recs.is_empty() {
                         println!("no history");
                     }
                     for r in &recs {
-                        println!("{} {}", r.timestamp_ms, crate::sessions::workspace_name(&r.workspace_root));
+                        println!(
+                            "{} {}",
+                            r.timestamp_ms,
+                            crate::sessions::workspace_name(&r.workspace_root)
+                        );
                         println!("    {}", r.text.chars().take(240).collect::<String>());
                     }
                     println!("({} prompts)", recs.len());
@@ -212,7 +222,15 @@ pub async fn run_interactive(
                     println!("max steps: {}", config.max_agent_steps);
                     println!("max tool result bytes: {}", config.max_tool_result_bytes);
                     println!("sandbox: {:?}", config.sandbox);
-                    println!("additional dirs: {}", config.additional_directories.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+                    println!(
+                        "additional dirs: {}",
+                        config
+                            .additional_directories
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                     continue;
                 }
                 Slash::Model => {
@@ -228,7 +246,10 @@ pub async fn run_interactive(
                 Slash::Sessions => {
                     let sessions = store.list(Some(&config.workspace))?;
                     for s in &sessions {
-                        println!("{}\t{}\t{} msgs\t{}", s.id, s.model, s.messages, s.last_text);
+                        println!(
+                            "{}\t{}\t{} msgs\t{}",
+                            s.id, s.model, s.messages, s.last_text
+                        );
                     }
                     println!("({} sessions)", sessions.len());
                     continue;
@@ -248,7 +269,11 @@ pub async fn run_interactive(
                                 println!("model: {}", sess.model);
                                 println!("mode: {:?}", sess.mode);
                                 for m in &sess.messages {
-                                    println!("-- {}: {}", m.role_str(), m.last_text().unwrap_or_default());
+                                    println!(
+                                        "-- {}: {}",
+                                        m.role_str(),
+                                        m.last_text().unwrap_or_default()
+                                    );
                                 }
                             }
                             None => println!("no session `{t}`"),
@@ -273,7 +298,7 @@ pub async fn run_interactive(
                                 resume: Some(rid),
                                 messages: Vec::new(),
                             };
-                            run_one(&config, &store, &interactive_human, req).await?;
+                            run_one(&config, store, &interactive_human, req).await?;
                         }
                         None => println!("no sessions to resume"),
                     }
@@ -309,14 +334,21 @@ pub async fn run_interactive(
                     println!("fxrs needs a model endpoint. Configure one of:");
                     println!("  AI_GATEWAY_API_KEY=...            (Vercel AI Gateway, default)");
                     println!("  ANTHROPIC_API_KEY=...             (native Anthropic)");
-                    println!("  AI_BASE_URL=... AI_API_KEY=...    (OpenAI-compatible local server)");
-                    println!("  FX_MODEL=...                      (model id, default openai/gpt-5.4)");
+                    println!(
+                        "  AI_BASE_URL=... AI_API_KEY=...    (OpenAI-compatible local server)"
+                    );
+                    println!(
+                        "  FX_MODEL=...                      (model id, default openai/gpt-5.4)"
+                    );
                     println!("  FX_PERMISSION_MODE=ask|auto|yolo  (default auto)");
                     continue;
                 }
                 Slash::Trace => {
                     interactive_human.trace = !interactive_human.trace;
-                    println!("trace {}", if interactive_human.trace { "on" } else { "off" });
+                    println!(
+                        "trace {}",
+                        if interactive_human.trace { "on" } else { "off" }
+                    );
                     continue;
                 }
                 Slash::Feedback => {
@@ -329,7 +361,11 @@ pub async fn run_interactive(
                     if ag.is_empty() {
                         println!("AGENTS.md: (none loaded)");
                     } else {
-                        println!("AGENTS.md: {} file(s), {} chars", ag.len(), ag.iter().map(|s| s.len()).sum::<usize>());
+                        println!(
+                            "AGENTS.md: {} file(s), {} chars",
+                            ag.len(),
+                            ag.iter().map(|s| s.len()).sum::<usize>()
+                        );
                     }
                     continue;
                 }
@@ -361,7 +397,7 @@ pub async fn run_interactive(
         }
         first = false;
 
-        run_one(&config, &store, &interactive_human, request).await?;
+        run_one(&config, store, &interactive_human, request).await?;
     }
     Ok(())
 }
@@ -376,12 +412,11 @@ async fn run_one(
     if let Some(e) = &out.error {
         eprintln!("\x1b[31mƒx error: {e}\x1b[0m");
     }
-    match out.finish_reason {
-        agent::FinishReason::MaxSteps => eprintln!(
+    if out.finish_reason == agent::FinishReason::MaxSteps {
+        eprintln!(
             "\x1b[33mƒx stopped: max agent steps reached ({})\x1b[0m",
             out.steps
-        ),
-        _ => {}
+        )
     }
     eprintln!(
         "\x1b[90mƒx done · session {} · {} steps · {} tool calls · {} tokens (${:.4})\x1b[0m",
@@ -401,8 +436,6 @@ fn short_id(id: &str) -> String {
         id.to_string()
     }
 }
-
-
 
 #[allow(dead_code)]
 fn _tool_use_json(t: &ToolUse) -> String {

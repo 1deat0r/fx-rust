@@ -1,12 +1,12 @@
 //! run_command: execute a shell command in the workspace.
 
 use anyhow::{Context, Result};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
-use super::{ToolContext, arg, arg_i64};
+use super::{arg, arg_i64, ToolContext};
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
@@ -20,7 +20,7 @@ pub async fn run_command(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let description = arg(args, "description").unwrap_or("");
 
     let timeout_ms = arg_i64(args, "timeout_ms")
-        .unwrap_or_else(|| DEFAULT_TIMEOUT_MS as i64)
+        .unwrap_or(DEFAULT_TIMEOUT_MS as i64)
         .clamp(1_000, MAX_TIMEOUT_MS as i64) as u64;
 
     let started = std::time::Instant::now();
@@ -49,7 +49,10 @@ pub async fn run_command(ctx: &ToolContext, args: &Value) -> Result<Value> {
             let _ = child.wait().await;
             (
                 None,
-                format!("… command exceeded {} ms timeout and was killed", timeout_ms),
+                format!(
+                    "… command exceeded {} ms timeout and was killed",
+                    timeout_ms
+                ),
             )
         }
     };
@@ -80,7 +83,11 @@ async fn run_to_completion(
     let status = child.wait().await?;
     let out = out_task.await.unwrap_or_default();
     let err = err_task.await.unwrap_or_default();
-    let combined = format!("{}{}", String::from_utf8_lossy(&out), String::from_utf8_lossy(&err));
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
     Ok((Some(status), combined))
 }
 
@@ -94,4 +101,3 @@ where
     }
     buf
 }
-

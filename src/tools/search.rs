@@ -4,18 +4,31 @@
 //! Scope and honesty: lexical, not neural; good for "find the code that…".
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::{ToolContext, arg};
+use super::{arg, ToolContext};
 
 const MAX_FILES: usize = 5000;
 const MAX_BYTES_PER_FILE: usize = 512 * 1024;
 const SKIP_DIRS: &[&str] = &[
-    ".git", ".hg", ".svn", ".fx", "target", "node_modules", "dist", "build",
-    "__pycache__", ".venv", "venv", "vendor", ".next", ".cache", "coverage",
+    ".git",
+    ".hg",
+    ".svn",
+    ".fx",
+    "target",
+    "node_modules",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "vendor",
+    ".next",
+    ".cache",
+    "coverage",
 ];
 
 fn is_text_ext(name: &str) -> bool {
@@ -24,11 +37,47 @@ fn is_text_ext(name: &str) -> bool {
     };
     matches!(
         ext,
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "c" | "cpp" | "h"
-            | "hpp" | "java" | "kt" | "rb" | "php" | "swift" | "sh" | "zsh"
-            | "bash" | "toml" | "yaml" | "yml" | "json" | "md" | "txt" | "html"
-            | "css" | "scss" | "sql" | "vue" | "svelte" | "zig" | "lua" | "r"
-            | "dart" | "cs" | "scala" | "ex" | "exs" | "erl" | "fs" | "ml"
+        "rs" | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "py"
+            | "go"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "java"
+            | "kt"
+            | "rb"
+            | "php"
+            | "swift"
+            | "sh"
+            | "zsh"
+            | "bash"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "md"
+            | "txt"
+            | "html"
+            | "css"
+            | "scss"
+            | "sql"
+            | "vue"
+            | "svelte"
+            | "zig"
+            | "lua"
+            | "r"
+            | "dart"
+            | "cs"
+            | "scala"
+            | "ex"
+            | "exs"
+            | "erl"
+            | "fs"
+            | "ml"
     )
 }
 
@@ -58,11 +107,13 @@ struct Doc {
     text: String,
 }
 
-fn walk_files(workspace: &PathBuf) -> Vec<PathBuf> {
+fn walk_files(workspace: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![workspace.clone()];
+    let mut stack = vec![workspace.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             if out.len() >= MAX_FILES {
                 return out;
@@ -162,11 +213,15 @@ pub fn semantic_search(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let files = walk_files(&root);
     let mut docs: Vec<Doc> = Vec::new();
     for path in files {
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if meta.len() > MAX_BYTES_PER_FILE as u64 {
             continue;
         }
-        let Ok(data) = std::fs::read(&path) else { continue };
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
         if data.contains(&0) {
             continue; // binary
         }
@@ -252,9 +307,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fxrs-search-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        write(&dir.join("src/main.rs"), "fn main() { println!(\"hello world\"); }");
-        write(&dir.join("src/util.rs"), "pub fn parse_config(cfg: &str) -> u32 { 42 }");
-        write(&dir.join("README.md"), "# project\nnothing here about parsing.");
+        write(
+            &dir.join("src/main.rs"),
+            "fn main() { println!(\"hello world\"); }",
+        );
+        write(
+            &dir.join("src/util.rs"),
+            "pub fn parse_config(cfg: &str) -> u32 { 42 }",
+        );
+        write(
+            &dir.join("README.md"),
+            "# project\nnothing here about parsing.",
+        );
         let c = ctx(&dir.display().to_string());
         let res = semantic_search(&c, &json!({"query": "parse cfg", "max_results": 3})).unwrap();
         let results = res["results"].as_array().expect("results array");
@@ -262,12 +326,18 @@ mod tests {
         let top = results[0]["path"].as_str().unwrap();
         assert!(top.contains("util.rs"), "expected util.rs, got {top}");
         let snip = results[0]["snippet"].as_str().unwrap_or("");
-        assert!(snip.contains("parse_config"), "snippet should show the hit: {snip}");
+        assert!(
+            snip.contains("parse_config"),
+            "snippet should show the hit: {snip}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn tokenize_is_lowercased() {
-        assert_eq!(tokenize("FooBar Baz_1!"), vec!["foobar".to_string(), "baz_1".to_string()]);
+        assert_eq!(
+            tokenize("FooBar Baz_1!"),
+            vec!["foobar".to_string(), "baz_1".to_string()]
+        );
     }
 }

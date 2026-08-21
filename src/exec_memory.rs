@@ -35,10 +35,19 @@ impl ExecMemory {
             .map(|prev| prev == &summary)
             .unwrap_or(false);
         self.last_same.insert(key, summary.clone());
-        if same_as_last && self.entries.back().map(|e| e.summary == summary).unwrap_or(false) {
+        if same_as_last
+            && self
+                .entries
+                .back()
+                .map(|e| e.summary == summary)
+                .unwrap_or(false)
+        {
             return;
         }
-        self.entries.push_back(Entry { tool: tool.to_string(), summary });
+        self.entries.push_back(Entry {
+            tool: tool.to_string(),
+            summary,
+        });
         while self.entries.len() > CAP {
             self.entries.pop_front();
         }
@@ -56,7 +65,10 @@ impl ExecMemory {
         // For path tools the path (first relevant key) drives dedup; for
         // bash it's the exact command line.
         if tool == "run_command" {
-            return format!("{tool}:{}", args.get("command").and_then(|v| v.as_str()).unwrap_or(""));
+            return format!(
+                "{tool}:{}",
+                args.get("command").and_then(|v| v.as_str()).unwrap_or("")
+            );
         }
         for k in ["file_path", "path", "old_path", "query", "url", "source"] {
             if let Some(v) = args.get(k).and_then(|v| v.as_str()) {
@@ -81,7 +93,10 @@ impl ExecMemory {
 fn summarize(tool: &str, args: &Value, result_text: &str, ok: bool) -> String {
     let status = if ok { "ok" } else { "error" };
     let target = describe_target(tool, args);
-    let result = first_line(result_text).chars().take(120).collect::<String>();
+    let result = first_line(result_text)
+        .chars()
+        .take(120)
+        .collect::<String>();
     match (tool, ok) {
         ("read_file", true) => format!("read_file {target} → {} chars", result.chars().count()),
         ("write_file", true) => format!("write_file {target} → written"),
@@ -95,16 +110,37 @@ fn summarize(tool: &str, args: &Value, result_text: &str, ok: bool) -> String {
         }
         ("web_search", _o) => format!("web_search \"{target}\" → {status}"),
         ("web_fetch", _o) => format!("web_fetch {target} → {status}: {}", short(result)),
-        ("semantic_search", _o) => format!("semantic_search \"{target}\" → {status}: {}", short(result)),
-        _ => format!("{tool} {target} → {status}{}", if result.is_empty() { String::new() } else { format!(": {}", short(result)) }),
+        ("semantic_search", _o) => {
+            format!("semantic_search \"{target}\" → {status}: {}", short(result))
+        }
+        _ => format!(
+            "{tool} {target} → {status}{}",
+            if result.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", short(result))
+            }
+        ),
     }
 }
 
 fn describe_target(tool: &str, args: &Value) -> String {
     if tool == "run_command" {
-        return args.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        return args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
     }
-    for k in ["file_path", "path", "old_path", "new_path", "query", "url", "name"] {
+    for k in [
+        "file_path",
+        "path",
+        "old_path",
+        "new_path",
+        "query",
+        "url",
+        "name",
+    ] {
         if let Some(v) = args.get(k).and_then(|v| v.as_str()) {
             return v.to_string();
         }
@@ -132,8 +168,18 @@ mod tests {
     #[test]
     fn records_and_snapshot() {
         let mut m = ExecMemory::default();
-        m.record("read_file", &json!({"file_path": "/ws/a.rs"}), "fn main() {}", true);
-        m.record("run_command", &json!({"command": "cargo test"}), "ok. 3 passed", true);
+        m.record(
+            "read_file",
+            &json!({"file_path": "/ws/a.rs"}),
+            "fn main() {}",
+            true,
+        );
+        m.record(
+            "run_command",
+            &json!({"command": "cargo test"}),
+            "ok. 3 passed",
+            true,
+        );
         assert_eq!(m.len(), 2);
         let snap = m.snapshot();
         assert!(snap.contains("read_file /ws/a.rs"));
@@ -153,7 +199,12 @@ mod tests {
     #[test]
     fn reports_errors() {
         let mut m = ExecMemory::default();
-        m.record("run_command", &json!({"command": "rm -rf /etc"}), "denied by rules", false);
+        m.record(
+            "run_command",
+            &json!({"command": "rm -rf /etc"}),
+            "denied by rules",
+            false,
+        );
         let snap = m.snapshot();
         assert!(snap.contains("→ error"));
     }

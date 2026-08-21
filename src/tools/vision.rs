@@ -19,23 +19,44 @@ pub fn media_type_for(path: &std::path::Path) -> Option<&'static str> {
 
 /// Read an image file, returning (media_type, base64 data).
 pub fn load_image(path: &std::path::Path) -> Result<(String, String), String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let meta =
+        std::fs::metadata(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
     if meta.len() > MAX_IMAGE_BYTES {
-        return Err(format!("{} is {:.1} MB; images over 15 MB are not supported", path.display(), meta.len() as f64 / 1e6));
+        return Err(format!(
+            "{} is {:.1} MB; images over 15 MB are not supported",
+            path.display(),
+            meta.len() as f64 / 1e6
+        ));
     }
-    let media = media_type_for(path)
-        .ok_or_else(|| format!("{}: unsupported image type (png/jpg/gif/webp only)", path.display()))?;
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-    Ok((media.to_string(), base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    let media = media_type_for(path).ok_or_else(|| {
+        format!(
+            "{}: unsupported image type (png/jpg/gif/webp only)",
+            path.display()
+        )
+    })?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    Ok((
+        media.to_string(),
+        base64::engine::general_purpose::STANDARD.encode(&bytes),
+    ))
 }
 
-pub fn view_image(ctx: &ToolContext, args: &serde_json::Value) -> Result<serde_json::Value, anyhow::Error> {
+pub fn view_image(
+    ctx: &ToolContext,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, anyhow::Error> {
     let Some(path_str) = args.get("path").and_then(|v| v.as_str()) else {
-        return Ok(err_json("view_image: missing required argument `path`".into()));
+        return Ok(err_json(
+            "view_image: missing required argument `path`".into(),
+        ));
     };
     let path = ctx.resolve(path_str);
     if !path.is_file() {
-        return Ok(err_json(format!("view_image: {} is not a file", path.display())));
+        return Ok(err_json(format!(
+            "view_image: {} is not a file",
+            path.display()
+        )));
     }
     let (media, data) = match load_image(&path) {
         Ok(v) => v,
@@ -63,9 +84,18 @@ mod tests {
 
     #[test]
     fn infers_media_types() {
-        assert_eq!(media_type_for(std::path::Path::new("a.png")), Some("image/png"));
-        assert_eq!(media_type_for(std::path::Path::new("a.JPG")), Some("image/jpeg"));
-        assert_eq!(media_type_for(std::path::Path::new("a.webp")), Some("image/webp"));
+        assert_eq!(
+            media_type_for(std::path::Path::new("a.png")),
+            Some("image/png")
+        );
+        assert_eq!(
+            media_type_for(std::path::Path::new("a.JPG")),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            media_type_for(std::path::Path::new("a.webp")),
+            Some("image/webp")
+        );
         assert_eq!(media_type_for(std::path::Path::new("a.txt")), None);
     }
 

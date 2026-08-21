@@ -7,8 +7,8 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::agent::{AgentOutput, AgentRequest, FinishReason};
-use crate::tools::err_json;
 use crate::config::Config;
+use crate::tools::err_json;
 use crate::ui::QuietHuman;
 
 thread_local! {

@@ -43,27 +43,153 @@ pub struct Spec {
 
 pub fn catalog() -> &'static [Spec] {
     &[
-        Spec { name: "help", aliases: &["h"], usage: "/help", description: "show this help", ready: true },
-        Spec { name: "exit", aliases: &["quit", "q"], usage: "/exit", description: "leave the shell", ready: true },
-        Spec { name: "clear", aliases: &["cls"], usage: "/clear", description: "clear the screen", ready: true },
-        Spec { name: "version", aliases: &["v"], usage: "/version", description: "version info", ready: true },
-        Spec { name: "status", aliases: &["s"], usage: "/status", description: "model / permissions / workspace", ready: true },
-        Spec { name: "model", aliases: &[], usage: "/model", description: "show current model", ready: true },
-        Spec { name: "permissions", aliases: &["perm"], usage: "/permissions", description: "show permission mode + rules", ready: true },
-        Spec { name: "sessions", aliases: &["ls"], usage: "/sessions", description: "list sessions for this workspace", ready: true },
-        Spec { name: "session", aliases: &[], usage: "/session [id]", description: "show a session (default latest)", ready: true },
-        Spec { name: "resume", aliases: &["r"], usage: "/resume [last|<id>]", description: "resume a session", ready: true },
-        Spec { name: "usage", aliases: &["credits"], usage: "/usage [24h|7d|30d|all]", description: "token usage / cost summary", ready: true },
-        Spec { name: "doctor", aliases: &[], usage: "/doctor", description: "run config + environment diagnostics", ready: true },
-        Spec { name: "history", aliases: &[], usage: "/history", description: "recent prompt history (tap /history 50)", ready: true },
-        Spec { name: "settings", aliases: &[], usage: "/settings", description: "show config catalog + effective settings", ready: true },
-        Spec { name: "setup", aliases: &[], usage: "/setup", description: "provider configuration guide", ready: true },
-        Spec { name: "trace", aliases: &[], usage: "/trace", description: "toggle tool-call tracing", ready: true },
-        Spec { name: "feedback", aliases: &[], usage: "/feedback", description: "report an issue", ready: true },
-        Spec { name: "compact", aliases: &[], usage: "/compact", description: "compact the conversation context", ready: false },
-        Spec { name: "workspace", aliases: &[], usage: "/workspace", description: "workspace + AGENTS.md info", ready: true },
-        Spec { name: "login", aliases: &[], usage: "/login", description: "authenticate a provider", ready: false },
-        Spec { name: "logout", aliases: &[], usage: "/logout", description: "clear provider credentials", ready: false },
+        Spec {
+            name: "help",
+            aliases: &["h"],
+            usage: "/help",
+            description: "show this help",
+            ready: true,
+        },
+        Spec {
+            name: "exit",
+            aliases: &["quit", "q"],
+            usage: "/exit",
+            description: "leave the shell",
+            ready: true,
+        },
+        Spec {
+            name: "clear",
+            aliases: &["cls"],
+            usage: "/clear",
+            description: "clear the screen",
+            ready: true,
+        },
+        Spec {
+            name: "version",
+            aliases: &["v"],
+            usage: "/version",
+            description: "version info",
+            ready: true,
+        },
+        Spec {
+            name: "status",
+            aliases: &["s"],
+            usage: "/status",
+            description: "model / permissions / workspace",
+            ready: true,
+        },
+        Spec {
+            name: "model",
+            aliases: &[],
+            usage: "/model",
+            description: "show current model",
+            ready: true,
+        },
+        Spec {
+            name: "permissions",
+            aliases: &["perm"],
+            usage: "/permissions",
+            description: "show permission mode + rules",
+            ready: true,
+        },
+        Spec {
+            name: "sessions",
+            aliases: &["ls"],
+            usage: "/sessions",
+            description: "list sessions for this workspace",
+            ready: true,
+        },
+        Spec {
+            name: "session",
+            aliases: &[],
+            usage: "/session [id]",
+            description: "show a session (default latest)",
+            ready: true,
+        },
+        Spec {
+            name: "resume",
+            aliases: &["r"],
+            usage: "/resume [last|<id>]",
+            description: "resume a session",
+            ready: true,
+        },
+        Spec {
+            name: "usage",
+            aliases: &["credits"],
+            usage: "/usage [24h|7d|30d|all]",
+            description: "token usage / cost summary",
+            ready: true,
+        },
+        Spec {
+            name: "doctor",
+            aliases: &[],
+            usage: "/doctor",
+            description: "run config + environment diagnostics",
+            ready: true,
+        },
+        Spec {
+            name: "history",
+            aliases: &[],
+            usage: "/history",
+            description: "recent prompt history (tap /history 50)",
+            ready: true,
+        },
+        Spec {
+            name: "settings",
+            aliases: &[],
+            usage: "/settings",
+            description: "show config catalog + effective settings",
+            ready: true,
+        },
+        Spec {
+            name: "setup",
+            aliases: &[],
+            usage: "/setup",
+            description: "provider configuration guide",
+            ready: true,
+        },
+        Spec {
+            name: "trace",
+            aliases: &[],
+            usage: "/trace",
+            description: "toggle tool-call tracing",
+            ready: true,
+        },
+        Spec {
+            name: "feedback",
+            aliases: &[],
+            usage: "/feedback",
+            description: "report an issue",
+            ready: true,
+        },
+        Spec {
+            name: "compact",
+            aliases: &[],
+            usage: "/compact",
+            description: "compact the conversation context",
+            ready: false,
+        },
+        Spec {
+            name: "workspace",
+            aliases: &[],
+            usage: "/workspace",
+            description: "workspace + AGENTS.md info",
+            ready: true,
+        },
+        Spec {
+            name: "login",
+            aliases: &[],
+            usage: "/login",
+            description: "authenticate a provider",
+            ready: false,
+        },
+        Spec {
+            name: "logout",
+            aliases: &[],
+            usage: "/logout",
+            description: "clear provider credentials",
+            ready: false,
+        },
     ]
 }
 
@@ -126,7 +252,9 @@ pub fn render_help() -> String {
             spec.usage, spec.description, ready
         ));
     }
-    out.push_str("\n\nanything else is sent to the model as a prompt. Ctrl-C during a turn interrupts.");
+    out.push_str(
+        "\n\nanything else is sent to the model as a prompt. Ctrl-C during a turn interrupts.",
+    );
     out
 }
 
@@ -139,15 +267,24 @@ mod tests {
         assert_eq!(parse("/help"), Some(Slash::Help));
         assert_eq!(parse("/q"), Some(Slash::Exit));
         assert_eq!(parse("/sessions"), Some(Slash::Sessions));
-        assert_eq!(parse("/session abc123"), Some(Slash::Session(Some("abc123".into()))));
-        assert_eq!(parse("/resume last"), Some(Slash::Resume(Some("last".into()))));
+        assert_eq!(
+            parse("/session abc123"),
+            Some(Slash::Session(Some("abc123".into())))
+        );
+        assert_eq!(
+            parse("/resume last"),
+            Some(Slash::Resume(Some("last".into())))
+        );
         assert_eq!(parse("/usage 7d"), Some(Slash::Usage(Some("7d".into()))));
         assert_eq!(parse("/doctor"), Some(Slash::Doctor));
     }
 
     #[test]
     fn unknown_routes_safely() {
-        assert_eq!(parse("/gibberish x y"), Some(Slash::Unknown("gibberish".into())));
+        assert_eq!(
+            parse("/gibberish x y"),
+            Some(Slash::Unknown("gibberish".into()))
+        );
         assert_eq!(parse("hello world"), None);
         assert_eq!(parse("/  "), Some(Slash::Unknown("".into())));
     }

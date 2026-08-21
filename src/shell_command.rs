@@ -120,7 +120,10 @@ pub fn lex(line: &str) -> Vec<Token> {
 
 fn rest_needs_no_rhs(next: &str, _original: &str) -> bool {
     // `VAR=` with nothing after is still an assignment.
-    next.is_empty() || next.trim_start().starts_with([' ', '\t', '\n', '&', ';', '|', '#'])
+    next.is_empty()
+        || next
+            .trim_start()
+            .starts_with([' ', '\t', '\n', '&', ';', '|', '#'])
 }
 
 fn is_identifier(s: &str) -> bool {
@@ -136,7 +139,9 @@ fn heredoc_delimiter(after: &str) -> Option<String> {
     let after = after.trim_start();
     // Skip `-` (strip tabs), then read the delimiter word.
     let after = after.strip_prefix('-').unwrap_or(after).trim_start();
-    let end = after.find([' ', '\t', '\n', '|', '&', ';', '>', '<']).unwrap_or(after.len());
+    let end = after
+        .find([' ', '\t', '\n', '|', '&', ';', '>', '<'])
+        .unwrap_or(after.len());
     let d = &after[..end];
     if d.is_empty() || d.contains('"') || d.contains('\'') {
         return None;
@@ -151,7 +156,7 @@ fn consume_heredoc<'a>(rest: &'a str, delim: &str) -> (&'a str, Option<&'a str>)
     let body_start = line_end;
     let body = &after_op[body_start..];
     let search_from = 0;
-    while let Some(idx) = find_line(body, delim, search_from) {
+    if let Some(idx) = find_line(body, delim, search_from) {
         let consumed = &after_op[..body_start + idx + delim.len()];
         let remaining = &after_op[body_start + idx + delim.len()..];
         return (consumed, Some(remaining));
@@ -250,7 +255,11 @@ pub fn head_command(line: &str) -> (String, Vec<String>) {
     for t in &tokens {
         match t {
             Token::Word(w) => words.push(w.clone()),
-            Token::Operator(op) if op == "|" || op == "&&" || op == "||" || op == ";" || op == "&" => break,
+            Token::Operator(op)
+                if op == "|" || op == "&&" || op == "||" || op == ";" || op == "&" =>
+            {
+                break
+            }
             Token::Operator(_) => {}
             Token::Assignment(..) => {}
         }
@@ -303,40 +312,49 @@ pub struct CommandEffect {
 fn classify_binary(bin: &str) -> CommandClass {
     let b = bin.rsplit('/').next().unwrap_or(bin);
     match b {
-        "ls" | "cat" | "head" | "tail" | "grep" | "egrep" | "fgrep" | "find" | "pwd"
-        | "echo" | "printf" | "date" | "which" | "file" | "wc" | "du" | "df" | "env"
-        | "printenv" | "tree" | "rg" | "awk" | "sort" | "uniq" | "cut" | "tr"
-        | "xargs" | "basename" | "dirname" | "realpath" | "readlink" | "stat" | "sha256sum"
-        | "md5sum" | "cksum" | "diff" | "cmp" | "comm" | "paste" | "join" | "nl" | "fmt"
-        | "fold" | "split" | "yes" | "false" | "true" | "id" | "whoami" | "hostname"
-        | "uname" | "lscpu" | "free" | "ps" | "uptime" | "jobs" | "history" | "alias"
-        | "type" | "time" | "nproc" | "getconf" => CommandClass::ReadOnly,
-        "mkdir" | "touch" | "cp" | "mv" | "rm" | "rmdir" | "ln" | "chmod" | "chown"
-        | "install" | "tee" | "truncate" | "mkfifo" | "mktemp" | "unlink"
-        | "shred" | "sync" => CommandClass::Write,
+        "ls" | "cat" | "head" | "tail" | "grep" | "egrep" | "fgrep" | "find" | "pwd" | "echo"
+        | "printf" | "date" | "which" | "file" | "wc" | "du" | "df" | "env" | "printenv"
+        | "tree" | "rg" | "awk" | "sort" | "uniq" | "cut" | "tr" | "xargs" | "basename"
+        | "dirname" | "realpath" | "readlink" | "stat" | "sha256sum" | "md5sum" | "cksum"
+        | "diff" | "cmp" | "comm" | "paste" | "join" | "nl" | "fmt" | "fold" | "split" | "yes"
+        | "false" | "true" | "id" | "whoami" | "hostname" | "uname" | "lscpu" | "free" | "ps"
+        | "uptime" | "jobs" | "history" | "alias" | "type" | "time" | "nproc" | "getconf" => {
+            CommandClass::ReadOnly
+        }
+        "mkdir" | "touch" | "cp" | "mv" | "rm" | "rmdir" | "ln" | "chmod" | "chown" | "install"
+        | "tee" | "truncate" | "mkfifo" | "mktemp" | "unlink" | "shred" | "sync" => {
+            CommandClass::Write
+        }
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "rsync" | "nc" | "netcat" | "telnet"
-        | "ping" | "traceroute" | "dig" | "host" | "nslookup" | "ftp" | "git" => CommandClass::Network,
-        "npm" | "yarn" | "pnpm" | "bun" | "pip" | "pip3" | "uv" | "poetry" | "cargo"
-        | "brew" | "apt" | "apt-get" | "dpkg" | "dnf" | "yum" | "pacman" | "gem"
-        | "composer" | "go" | "rustup" | "conda" | "mamba" => CommandClass::Package,
-        "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "nodejs"
-        | "ruby" | "perl" | "php" | "less" | "more" | "top" | "htop" | "vim" | "vi"
-        | "nano" | "emacs" | "irb" | "rails" | "mysql" | "psql" | "sqlite3" | "redis-cli"
-        | "mongosh" | "watch" | "clear" | "reset" | "man" | "info" | "bc" | "dc"
-        | "gdb" | "lldb" | "strace" | "tar" | "gzip" | "gunzip" | "zip" | "unzip"
-        | "xz" | "bz2" | "make" | "cmake" | "ninja" | "meson" => CommandClass::Interactive,
-        "sudo" | "su" | "systemctl" | "service" | "systemd-run" | "kill" | "pkill"
-        | "killall" | "reboot" | "shutdown" | "halt" | "poweroff" | "mkfs" | "mkfs.ext4"
-        | "parted" | "fdisk" | "gdisk" | "iptables" | "ip6tables" | "ufw" | "firewall-cmd"
-        | "passwd" | "chroot" | "nsenter" | "unshare" | "mount" | "umount" | "swapoff"
-        | "rmmod" | "modprobe" | "insmod" | "sysctl" | "cron" | "at" | "batch" | "docker"
-        | "podman" | "kubectl" | "helm" | "terraform" | "vault" | "base64" | "openssl" => CommandClass::Dangerous,
+        | "ping" | "traceroute" | "dig" | "host" | "nslookup" | "ftp" | "git" => {
+            CommandClass::Network
+        }
+        "npm" | "yarn" | "pnpm" | "bun" | "pip" | "pip3" | "uv" | "poetry" | "cargo" | "brew"
+        | "apt" | "apt-get" | "dpkg" | "dnf" | "yum" | "pacman" | "gem" | "composer" | "go"
+        | "rustup" | "conda" | "mamba" => CommandClass::Package,
+        "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "nodejs" | "ruby"
+        | "perl" | "php" | "less" | "more" | "top" | "htop" | "vim" | "vi" | "nano" | "emacs"
+        | "irb" | "rails" | "mysql" | "psql" | "sqlite3" | "redis-cli" | "mongosh" | "watch"
+        | "clear" | "reset" | "man" | "info" | "bc" | "dc" | "gdb" | "lldb" | "strace" | "tar"
+        | "gzip" | "gunzip" | "zip" | "unzip" | "xz" | "bz2" | "make" | "cmake" | "ninja"
+        | "meson" => CommandClass::Interactive,
+        "sudo" | "su" | "systemctl" | "service" | "systemd-run" | "kill" | "pkill" | "killall"
+        | "reboot" | "shutdown" | "halt" | "poweroff" | "mkfs" | "mkfs.ext4" | "parted"
+        | "fdisk" | "gdisk" | "iptables" | "ip6tables" | "ufw" | "firewall-cmd" | "passwd"
+        | "chroot" | "nsenter" | "unshare" | "mount" | "umount" | "swapoff" | "rmmod"
+        | "modprobe" | "insmod" | "sysctl" | "cron" | "at" | "batch" | "docker" | "podman"
+        | "kubectl" | "helm" | "terraform" | "vault" | "base64" | "openssl" => {
+            CommandClass::Dangerous
+        }
         _ => CommandClass::Unknown,
     }
 }
 
 fn is_path_like(a: &str) -> bool {
-    a.starts_with('.') || a.starts_with('/') || a.starts_with('~') || a.contains('/')
+    a.starts_with('.')
+        || a.starts_with('/')
+        || a.starts_with('~')
+        || a.contains('/')
         || a.contains('.') // loose: treat dotted tokens as paths
 }
 
@@ -375,7 +393,13 @@ pub fn classify(line: &str) -> CommandEffect {
             }
             continue;
         }
-        if a == "-o" || a == "--output" || a == "-t" || a == "--target" || a == "-d" || a == "--directory" {
+        if a == "-o"
+            || a == "--output"
+            || a == "-t"
+            || a == "--target"
+            || a == "-d"
+            || a == "--directory"
+        {
             pending_output = Some(a.clone());
             continue;
         }
@@ -386,14 +410,21 @@ pub fn classify(line: &str) -> CommandEffect {
     eff.paths = paths;
     eff.binary = effective.trim().to_string();
 
-    let base = eff.binary.rsplit('/').next().unwrap_or(&eff.binary).to_string();
+    let base = eff
+        .binary
+        .rsplit('/')
+        .next()
+        .unwrap_or(&eff.binary)
+        .to_string();
     match base.as_str() {
         "git" => {
             // Refine git: some subcommands are read-only, others write/network.
             match args.first().map(|s| s.as_str()) {
-                Some("status" | "log" | "diff" | "show" | "branch" | "tag" | "remote"
-                | "rev-parse" | "ls-files" | "ls-tree" | "config" | "help" | "blame"
-                | "grep" | "whatchanged" | "describe" | "shortlog" | "check-ignore") => {
+                Some(
+                    "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote" | "rev-parse"
+                    | "ls-files" | "ls-tree" | "config" | "help" | "blame" | "grep" | "whatchanged"
+                    | "describe" | "shortlog" | "check-ignore",
+                ) => {
                     eff.class = CommandClass::ReadOnly;
                 }
                 Some("clone" | "fetch" | "pull" | "push" | "submodule" | "ls-remote") => {
@@ -403,12 +434,16 @@ pub fn classify(line: &str) -> CommandEffect {
                         eff.destructive = true;
                     }
                 }
-                Some("commit" | "add" | "mv" | "rm" | "reset" | "rebase" | "merge"
-                | "cherry-pick" | "checkout" | "switch" | "restore" | "stash"
-                | "clean" | "revert") => {
+                Some(
+                    "commit" | "add" | "mv" | "rm" | "reset" | "rebase" | "merge" | "cherry-pick"
+                    | "checkout" | "switch" | "restore" | "stash" | "clean" | "revert",
+                ) => {
                     eff.class = CommandClass::Write;
                     eff.writes = true;
-                    if matches!(args.first().map(|s| s.as_str()), Some("clean" | "reset" | "rebase")) {
+                    if matches!(
+                        args.first().map(|s| s.as_str()),
+                        Some("clean" | "reset" | "rebase")
+                    ) {
                         eff.destructive = true;
                     }
                 }
@@ -431,12 +466,27 @@ pub fn classify(line: &str) -> CommandEffect {
         "curl" => {
             eff.network = true;
             let writes_body = args.iter().any(|a| {
-                a == "-X" || a.starts_with("-X") || a == "--data" || a.starts_with("--data")
-                    || a == "-d" || a == "--upload-file" || a == "-F" || a == "--form"
-                    || a == "-T" || a == "--request"
+                a == "-X"
+                    || a.starts_with("-X")
+                    || a == "--data"
+                    || a.starts_with("--data")
+                    || a == "-d"
+                    || a == "--upload-file"
+                    || a == "-F"
+                    || a == "--form"
+                    || a == "-T"
+                    || a == "--request"
             }) || args.iter().any(|a| a.starts_with("-X") && a != "-X");
-            let output_file = args.iter().any(|a| a == "-o" || a == "-O" || a == "--output");
-            eff.class = if writes_body { CommandClass::Network } else { CommandClass::ReadOnly };
+            let output_file = args
+                .iter()
+                .any(|a| a == "-o" || a == "-O" || a == "--output");
+            // Downloading to disk is a network write: it must not fall through
+            // the read-only auto-allow path.
+            eff.class = if writes_body || output_file {
+                CommandClass::Network
+            } else {
+                CommandClass::ReadOnly
+            };
             eff.writes = output_file;
         }
         "tee" => {
@@ -449,7 +499,8 @@ pub fn classify(line: &str) -> CommandEffect {
             eff.writes = true;
             eff.destructive = true;
         }
-        "tar" | "gzip" | "gunzip" | "zip" | "unzip" | "xz" | "bzip2" | "make" | "cmake" | "ninja" | "meson" => {
+        "tar" | "gzip" | "gunzip" | "zip" | "unzip" | "xz" | "bzip2" | "make" | "cmake"
+        | "ninja" | "meson" => {
             eff.class = CommandClass::Interactive; // may be long-running/write; not auto-allowed
             eff.writes = true;
         }
@@ -458,23 +509,21 @@ pub fn classify(line: &str) -> CommandEffect {
             eff.class = CommandClass::Package;
             eff.writes = true;
         }
-        "cargo" => {
-            match args.first().map(|s| s.as_str()) {
-                Some("build" | "check" | "test" | "fmt" | "clippy") => {
-                    eff.class = CommandClass::Write;
-                    eff.writes = true;
-                }
-                Some("install" | "add" | "update" | "publish") => {
-                    eff.class = CommandClass::Package;
-                    eff.network = true;
-                    eff.writes = true;
-                }
-                _ => {
-                    eff.class = CommandClass::Package;
-                    eff.writes = true;
-                }
+        "cargo" => match args.first().map(|s| s.as_str()) {
+            Some("build" | "check" | "test" | "fmt" | "clippy") => {
+                eff.class = CommandClass::Write;
+                eff.writes = true;
             }
-        }
+            Some("install" | "add" | "update" | "publish") => {
+                eff.class = CommandClass::Package;
+                eff.network = true;
+                eff.writes = true;
+            }
+            _ => {
+                eff.class = CommandClass::Package;
+                eff.writes = true;
+            }
+        },
         "docker" | "podman" | "kubectl" | "terraform" | "vault" | "helm" => {
             eff.class = CommandClass::Dangerous;
             eff.writes = true;
@@ -514,7 +563,7 @@ pub fn is_read_only(line: &str) -> bool {
 
 /// Best-effort: does the command line reference a path outside `base`?
 /// Returns the first offending path argument, if any.
-pub fn path_outside<'a>(line: &'a str, base: &Path) -> Option<String> {
+pub fn path_outside(line: &str, base: &Path) -> Option<String> {
     let eff = classify(line);
     for p in &eff.paths {
         let expanded = p.replace('~', "");
@@ -535,7 +584,11 @@ mod tests {
         let toks = lex("echo hello world");
         assert_eq!(
             toks,
-            vec![Token::Word("echo".into()), Token::Word("hello".into()), Token::Word("world".into())]
+            vec![
+                Token::Word("echo".into()),
+                Token::Word("hello".into()),
+                Token::Word("world".into())
+            ]
         );
     }
 
@@ -579,6 +632,13 @@ mod tests {
     }
 
     #[test]
+    fn curl_download_to_disk_is_network_write() {
+        let c = classify("curl -o /tmp/x https://example.com/data");
+        assert_eq!(c.class, CommandClass::Network);
+        assert!(c.writes);
+    }
+
+    #[test]
     fn classify_network() {
         let c = classify("curl https://example.com");
         assert!(c.network);
@@ -591,7 +651,10 @@ mod tests {
     #[test]
     fn classify_dangerous() {
         assert!(classify("sudo apt update").destructive);
-        assert_eq!(classify("dd if=/dev/zero of=/dev/sda").class, CommandClass::Dangerous);
+        assert_eq!(
+            classify("dd if=/dev/zero of=/dev/sda").class,
+            CommandClass::Dangerous
+        );
         assert_eq!(classify("rm -rf /").class, CommandClass::Write);
     }
 

@@ -1,7 +1,7 @@
 //! Minimal Server-Sent Events decoder over a reqwest byte stream.
 
-use anyhow::{Result, bail};
-use futures_util::{StreamExt, stream::BoxStream};
+use anyhow::{bail, Result};
+use futures_util::{stream::BoxStream, StreamExt};
 use reqwest::Response;
 
 #[derive(Debug, Clone)]

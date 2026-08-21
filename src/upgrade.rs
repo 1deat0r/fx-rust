@@ -14,12 +14,19 @@ pub fn latest_release() -> Result<Option<String>> {
         .context("checking GitHub releases")?
         .into_string()?;
     let v: serde_json::Value = serde_json::from_str(&body).context("parsing release")?;
-    Ok(v.get("tag_name").and_then(|t| t.as_str()).map(|s| s.to_string()))
+    Ok(v.get("tag_name")
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string()))
 }
 
 pub fn install_from_git() -> Result<()> {
     let status = std::process::Command::new("cargo")
-        .args(["install", "--git", "https://github.com/1deat0r/fx-rust", "--force"])
+        .args([
+            "install",
+            "--git",
+            "https://github.com/1deat0r/fx-rust",
+            "--force",
+        ])
         .status()
         .context("running cargo install")?;
     if status.success() {

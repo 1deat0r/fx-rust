@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::sse::sse_events;
 use super::{EventStream, Message, ProviderConfig, StreamEvent};
@@ -37,7 +37,13 @@ fn serialize_content(m: &Message) -> Vec<Value> {
     parts
 }
 
-fn build_body(p: &ProviderConfig, messages: &[Message], tools: Option<&[Value]>, system: &str, max_tokens: Option<u32>) -> Value {
+fn build_body(
+    p: &ProviderConfig,
+    messages: &[Message],
+    tools: Option<&[Value]>,
+    system: &str,
+    max_tokens: Option<u32>,
+) -> Value {
     let mut body = json!({
         "model": p.model,
         "messages": messages
@@ -206,7 +212,7 @@ fn truncate(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         let mut out: String = s.chars().take(n).collect();
-        out.push_str("…");
+        out.push('…');
         out
     }
 }

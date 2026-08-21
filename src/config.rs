@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 use crate::permissions::{PermissionMode, ToolRule};
@@ -133,7 +133,11 @@ pub fn fx_home() -> PathBuf {
         .map(PathBuf::from)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| home_dir().map(|h| h.join(".fx")).unwrap_or_else(|| PathBuf::from(".fx")))
+        .unwrap_or_else(|| {
+            home_dir()
+                .map(|h| h.join(".fx"))
+                .unwrap_or_else(|| PathBuf::from(".fx"))
+        })
 }
 
 pub fn settings_path() -> PathBuf {
@@ -142,14 +146,13 @@ pub fn settings_path() -> PathBuf {
 
 fn parse_tool_rule(v: &serde_json::Value) -> Result<ToolRule> {
     match v {
-        serde_json::Value::String(s) => {
-            Ok(ToolRule::Whole(crate::permissions::parse_rule(s)?))
-        }
+        serde_json::Value::String(s) => Ok(ToolRule::Whole(crate::permissions::parse_rule(s)?)),
         serde_json::Value::Object(map) => {
             let mut patterns = Vec::new();
             for (k, val) in map {
                 let rule = crate::permissions::parse_rule(
-                    val.as_str().context("permission pattern value must be a string")?,
+                    val.as_str()
+                        .context("permission pattern value must be a string")?,
                 )?;
                 patterns.push((k.clone(), rule));
             }
@@ -168,44 +171,53 @@ fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>
         eprintln!("fxrs: warning: {path:?} exceeds 64 KiB; ignoring layer");
         return Ok(None);
     }
-    let data = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed = serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))?;
+    let data =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed =
+        serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))?;
     Ok(Some(parsed))
 }
 
 /// Resolve the effective configuration for a workspace directory.
 pub fn resolve(workspace: &Path) -> Result<Config> {
     // Layer 5: project .fx.json (public fields only).
-    let project: ProjectConfig = read_json_file(&workspace.join(".fx.json"))?
-        .unwrap_or_default();
+    let project: ProjectConfig = read_json_file(&workspace.join(".fx.json"))?.unwrap_or_default();
 
     // Layers 3+4: user profile with per-workspace overrides.
     let settings: SettingsFile = read_json_file(&settings_path())?.unwrap_or_default();
 
-    let workspace_key = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let workspace_key = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let ws_entry = settings
         .workspaces
         .as_ref()
         .and_then(|w| {
             w.iter()
-                .find(|(k, _)| Path::new(k) == workspace || Path::new(k) == &workspace_key)
+                .find(|(k, _)| Path::new(k) == workspace || Path::new(k) == workspace_key)
                 .map(|(_, v)| v.clone())
         })
         .unwrap_or_default();
 
     // ---- fields with full precedence resolution ----
 
-    let model = std::env::var("FX_MODEL").ok().flatten_nonempty()
+    let model = std::env::var("FX_MODEL")
+        .ok()
+        .flatten_nonempty()
         .or(settings.model)
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
-    let permission_mode = std::env::var("FX_PERMISSION_MODE").ok().flatten_nonempty()
+    let permission_mode = std::env::var("FX_PERMISSION_MODE")
+        .ok()
+        .flatten_nonempty()
         .or(settings.permission_mode)
         .map(|m| PermissionMode::parse(&m))
         .transpose()?
         .unwrap_or(PermissionMode::Auto);
 
-    let max_agent_steps = std::env::var("FX_MAX_AGENT_STEPS").ok().flatten_nonempty()
+    let max_agent_steps = std::env::var("FX_MAX_AGENT_STEPS")
+        .ok()
+        .flatten_nonempty()
         .and_then(|v| v.parse::<usize>().ok())
         .or(settings.max_agent_steps)
         .or(project.max_agent_steps)
@@ -217,10 +229,7 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         .unwrap_or(DEFAULT_MAX_TOOL_RESULT_BYTES)
         .max(1024);
 
-    let first_call_tool_choice = match settings
-        .first_call_tool_choice
-        .as_deref()
-        .unwrap_or("auto")
+    let first_call_tool_choice = match settings.first_call_tool_choice.as_deref().unwrap_or("auto")
     {
         "none" => FirstCallToolChoice::None,
         _ => FirstCallToolChoice::Auto,
@@ -240,13 +249,19 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         _ => SandboxMode::None,
     };
 
-    let input_appearance = std::env::var("FX_INPUT_APPEARANCE").ok().flatten_nonempty()
+    let input_appearance = std::env::var("FX_INPUT_APPEARANCE")
+        .ok()
+        .flatten_nonempty()
         .or(settings.input_appearance)
         .unwrap_or_else(|| "auto".to_string());
-    let presentation_mode = std::env::var("FX_PRESENTATION_MODE").ok().flatten_nonempty()
+    let presentation_mode = std::env::var("FX_PRESENTATION_MODE")
+        .ok()
+        .flatten_nonempty()
         .or(settings.presentation_mode)
         .unwrap_or_else(|| "default".to_string());
-    let update_channel = std::env::var("FX_UPDATE_CHANNEL").ok().flatten_nonempty()
+    let update_channel = std::env::var("FX_UPDATE_CHANNEL")
+        .ok()
+        .flatten_nonempty()
         .or(settings.update_channel)
         .unwrap_or_else(|| "stable".to_string());
 
@@ -281,7 +296,11 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
             if let Some(proj) = project.additional_directories {
                 dirs.extend(proj.into_iter().map(PathBuf::from));
             }
-            if dirs.is_empty() { None } else { Some(dirs) }
+            if dirs.is_empty() {
+                None
+            } else {
+                Some(dirs)
+            }
         })
         .unwrap_or_default();
 
@@ -353,6 +372,6 @@ trait OptionStringExt {
 }
 impl OptionStringExt for Option<String> {
     fn flatten_nonempty(self) -> Option<String> {
-        self.and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+        self.filter(|s| !s.trim().is_empty())
     }
 }

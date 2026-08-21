@@ -42,11 +42,7 @@ impl ApprovalRequest {
 
     /// 160-char preview of the raw input for the prompt.
     pub fn preview(&self) -> String {
-        let body: String = self
-            .input_text
-            .chars()
-            .take(160)
-            .collect();
+        let body: String = self.input_text.chars().take(160).collect();
         if body.len() < self.input_text.len() {
             format!("{body}…")
         } else {

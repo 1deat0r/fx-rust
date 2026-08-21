@@ -11,9 +11,7 @@ use serde_json::Value;
 
 use crate::config::{Config, FirstCallToolChoice};
 use crate::permissions::{Decision, PermissionMode, Permissions};
-use crate::providers::{
-    self, ContentBlock, Message, ProviderConfig, StreamEvent, ToolUse,
-};
+use crate::providers::{self, ContentBlock, Message, ProviderConfig, StreamEvent, ToolUse};
 use crate::sessions::{Session, SessionStore};
 use crate::tools::{self, ToolContext};
 use crate::ui::Human;
@@ -80,13 +78,14 @@ pub async fn run(
     };
 
     // System prompt: static guidance + workspace context + AGENTS.md.
-    let mut system = String::new();
-    system.push_str(include_str!("agent/system_prompt.txt"));
-    system.push_str("\n\n## Workspace\n");
-    system.push_str(&format!("- workspace: `{}`\n", config.workspace.display()));
-    system.push_str(&format!("- today's date: {}\n", crate::util::today()));
+    // Base system prompt (static): exec memory is appended per-turn below,
+    // NOT accumulated across turns.
+    let mut system_base = String::from(include_str!("agent/system_prompt.txt"));
+    system_base.push_str("\n\n## Workspace\n");
+    system_base.push_str(&format!("- workspace: `{}`\n", config.workspace.display()));
+    system_base.push_str(&format!("- today's date: {}\n", crate::util::today()));
     if let Some(extra) = &req.system {
-        system.push_str(&format!("\n{extra}\n"));
+        system_base.push_str(&format!("\n{extra}\n"));
     }
     let project_instructions = if config.context {
         crate::config::load_project_instructions(&config.workspace)
@@ -94,17 +93,17 @@ pub async fn run(
         Vec::new()
     };
     if !project_instructions.is_empty() {
-        system.push_str("\n## Project instructions (AGENTS.md)\n");
-        system.push_str(&project_instructions.join("\n\n"));
+        system_base.push_str("\n## Project instructions (AGENTS.md)\n");
+        system_base.push_str(&project_instructions.join("\n\n"));
     }
     if let Some(t) = &req.prompt {
-        system.push_str(&format!("\n## User's current request\n{t}\n"));
+        system_base.push_str(&format!("\n## User's current request\n{t}\n"));
     }
 
     // Prompt history: append user prompts to ~/.fx/history.jsonl.
     if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
-        let _ = crate::history::HistoryStore::new()
-            .record(&config.workspace.display().to_string(), p);
+        let _ =
+            crate::history::HistoryStore::new().record(&config.workspace.display().to_string(), p);
     }
 
     // Seed the transcript with the user's first message.
@@ -178,22 +177,25 @@ pub async fn run(
         steps += 1;
         human.step_started(steps);
 
-        let tools_schema = if steps == 1 && config.first_call_tool_choice == FirstCallToolChoice::None {
-            None
-        } else if mcp_tools.is_empty() {
-            Some(tools::schemas())
-        } else {
-            Some(tools::schemas_with_mcp(&mcp_tools))
-        };
+        let tools_schema =
+            if steps == 1 && config.first_call_tool_choice == FirstCallToolChoice::None {
+                None
+            } else if mcp_tools.is_empty() {
+                Some(tools::schemas())
+            } else {
+                Some(tools::schemas_with_mcp(&mcp_tools))
+            };
+        // Execution-memory block is rebuilt fresh each turn (append once).
+        let mut turn_system = system_base.clone();
         if !exec_memory.is_empty() {
-            system.push_str("\n");
-            system.push_str(&exec_memory.snapshot());
+            turn_system.push('\n');
+            turn_system.push_str(&exec_memory.snapshot());
         }
         let mut stream = providers::stream(
             &provider,
             &transcript,
             tools_schema.as_deref(),
-            &system,
+            &turn_system,
             Some(provider_max_tokens(&provider)),
         );
 
@@ -230,14 +232,26 @@ pub async fn run(
                         order.push(index);
                     }
                     human.trace_tool(name.clone());
-                    calls.insert(index, ToolUse { id, name, arguments: String::new() });
+                    calls.insert(
+                        index,
+                        ToolUse {
+                            id,
+                            name,
+                            arguments: String::new(),
+                        },
+                    );
                 }
                 Ok(StreamEvent::ToolCallArgDelta { index, delta }) => {
                     if let Some(c) = calls.get_mut(&index) {
                         c.arguments.push_str(&delta);
                     }
                 }
-                Ok(StreamEvent::ToolCallDone { index, id, name, input }) => {
+                Ok(StreamEvent::ToolCallDone {
+                    index,
+                    id,
+                    name,
+                    input,
+                }) => {
                     let args = serde_json::to_string(&input).unwrap_or_default();
                     if let Some(c) = calls.get_mut(&index) {
                         c.id = id;
@@ -246,7 +260,10 @@ pub async fn run(
                     }
                 }
                 Ok(StreamEvent::Finish) => {}
-                Ok(StreamEvent::Usage { input_tokens, output_tokens }) => {
+                Ok(StreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                }) => {
                     let i = input_tokens.unwrap_or(0);
                     let o = output_tokens.unwrap_or(0);
                     total_input_tokens = total_input_tokens.saturating_add(i);
@@ -278,7 +295,7 @@ pub async fn run(
             let parsed = tools::parse_text_tool_calls(&text);
             if !parsed.is_empty() {
                 for (i, (tname, targs)) in parsed.into_iter().enumerate() {
-                    let idx = i as usize;
+                    let idx = i;
                     order.push(idx);
                     calls.insert(
                         idx,
@@ -325,7 +342,11 @@ pub async fn run(
         if call_ids.is_empty() {
             finish = FinishReason::Stop;
             // Lifecycle hooks at stop / end of turn.
-            let visible_text = if display_text.trim().is_empty() { text.clone() } else { display_text.clone() };
+            let visible_text = if display_text.trim().is_empty() {
+                text.clone()
+            } else {
+                display_text.clone()
+            };
             crate::hooks::run(
                 crate::hooks::HookKind::Stop,
                 crate::hooks::stop_input(&config.workspace, Some(&session_id), &visible_text),
@@ -383,14 +404,21 @@ pub async fn run(
                 }
             }
             let result = if let Some(reason) = hook_blocked {
-                Ok(tools::err_json(format!("{}: blocked by PreToolUse hook: {reason}", call.name)))
+                Ok(tools::err_json(format!(
+                    "{}: blocked by PreToolUse hook: {reason}",
+                    call.name
+                )))
             } else {
                 let effective_arguments = rewritten_args
                     .as_ref()
                     .map(|a| serde_json::to_string(a).unwrap_or_default())
                     .unwrap_or_else(|| call.arguments.clone());
                 let effective_call = if rewritten_args.is_some() {
-                    ToolUse { id: call.id.clone(), name: call.name.clone(), arguments: effective_arguments }
+                    ToolUse {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: effective_arguments,
+                    }
                 } else {
                     call.clone()
                 };
@@ -398,71 +426,85 @@ pub async fn run(
                 // enforce required fields before anything executes.
                 let prepared_args: Value =
                     serde_json::from_str(&effective_call.arguments).unwrap_or(Value::Null);
-                let prepared = crate::tool_prep::prepare(
-                    &call.name,
-                    &prepared_args,
-                    &ctx,
-                );
+                let prepared = crate::tool_prep::prepare(&call.name, &prepared_args, &ctx);
                 let r = if let Some(prep_err) = prepared.error {
                     Ok(tools::err_json(format!("{}: {prep_err}", call.name)))
                 } else {
                     match decision {
-                    Decision::Allow => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
-                    Decision::Deny(reason) => {
-                        Ok(tools::err_json(format!("{name}: blocked by permission rules: {reason}", name = call.name)))
-                    }
-                    Decision::Unresolved => match config.permission_mode {
-                        PermissionMode::Yolo => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
-                        PermissionMode::Ask if req.interactive => {
-                            let approval_req = crate::approval::ApprovalRequest {
-                                tool_name: call.name.clone(),
-                                target: target.clone(),
-                                input_text: call.arguments.clone(),
-                                workspace: config.workspace.clone(),
-                            };
-                            crate::hooks::run(
-                                crate::hooks::HookKind::AttentionRequired,
-                                crate::hooks::attention_required_input(
-                                    &config.workspace,
-                                    Some(&session_id),
-                                    "permission approval needed",
-                                ),
-                                &config.workspace,
-                                30,
-                            );
-                            let allowed = human.approve(&approval_req);
-                            if allowed {
-                                let pattern = grant_pattern(&target);
-                                grants_map.insert(call.name.clone(), pattern.clone());
-                                permissions.grants.allow(&call.name, &pattern);
-                                execute_tool_prepared(&ctx, &effective_call, &prepared).await
-                            } else {
-                                Ok(tools::err_json(format!("{}: denied by user", call.name)))
-                            }
+                        Decision::Allow => {
+                            execute_tool_prepared(&ctx, &effective_call, &prepared).await
                         }
-                        PermissionMode::Ask => Ok(tools::err_json(format!(
+                        Decision::Deny(reason) => Ok(tools::err_json(format!(
+                            "{name}: blocked by permission rules: {reason}",
+                            name = call.name
+                        ))),
+                        Decision::Unresolved => match config.permission_mode {
+                            PermissionMode::Yolo => {
+                                execute_tool_prepared(&ctx, &effective_call, &prepared).await
+                            }
+                            PermissionMode::Ask if req.interactive => {
+                                let approval_req = crate::approval::ApprovalRequest {
+                                    tool_name: call.name.clone(),
+                                    target: target.clone(),
+                                    input_text: call.arguments.clone(),
+                                    workspace: config.workspace.clone(),
+                                };
+                                crate::hooks::run(
+                                    crate::hooks::HookKind::AttentionRequired,
+                                    crate::hooks::attention_required_input(
+                                        &config.workspace,
+                                        Some(&session_id),
+                                        "permission approval needed",
+                                    ),
+                                    &config.workspace,
+                                    30,
+                                );
+                                let allowed = human.approve(&approval_req);
+                                if allowed {
+                                    let pattern = grant_pattern(&target);
+                                    grants_map.insert(call.name.clone(), pattern.clone());
+                                    permissions.grants.allow(&call.name, &pattern);
+                                    execute_tool_prepared(&ctx, &effective_call, &prepared).await
+                                } else {
+                                    Ok(tools::err_json(format!("{}: denied by user", call.name)))
+                                }
+                            }
+                            PermissionMode::Ask => Ok(tools::err_json(format!(
                             "{}: blocked: permission needed but interactive approval unavailable",
                             call.name
                         ))),
-                        PermissionMode::Auto => {
-                            use crate::permissions::{AutoDecision, auto_classify};
-                            match auto_classify(&crate::permissions::PermissionRequest {
-                                tool_name: &call.name,
-                                target: &target,
-                                input_text: call.arguments.clone(),
-                                workspace: &config.workspace,
-                            }, &sandbox) {
-                                AutoDecision::Allow => execute_tool_prepared(&ctx, &effective_call, &prepared).await,
-                                AutoDecision::Deny(reason) => Ok(tools::err_json(format!(
-                                    "{}: not auto-approved: {}",
-                                    call.name, reason
-                                ))),
-                                AutoDecision::Undetermined => {
-                                    auto_review(&provider, &system, &transcript, &call, config.clone()).await
+                            PermissionMode::Auto => {
+                                use crate::permissions::{auto_classify, AutoDecision};
+                                match auto_classify(
+                                    &crate::permissions::PermissionRequest {
+                                        tool_name: &call.name,
+                                        target: &target,
+                                        input_text: call.arguments.clone(),
+                                        workspace: &config.workspace,
+                                    },
+                                    &sandbox,
+                                ) {
+                                    AutoDecision::Allow => {
+                                        execute_tool_prepared(&ctx, &effective_call, &prepared)
+                                            .await
+                                    }
+                                    AutoDecision::Deny(reason) => Ok(tools::err_json(format!(
+                                        "{}: not auto-approved: {}",
+                                        call.name, reason
+                                    ))),
+                                    AutoDecision::Undetermined => {
+                                        auto_review(
+                                            &provider,
+                                            &system_base,
+                                            &transcript,
+                                            &call,
+                                            config.clone(),
+                                        )
+                                        .await
+                                    }
                                 }
                             }
-                        }
-                    },
+                        },
                     }
                 };
                 r
@@ -624,8 +666,7 @@ async fn execute_tool_prepared(
     let final_call = ToolUse {
         id: call.id.clone(),
         name: call.name.clone(),
-        arguments: serde_json::to_string(&prepared.args)
-            .unwrap_or_else(|_| call.arguments.clone()),
+        arguments: serde_json::to_string(&prepared.args).unwrap_or_else(|_| call.arguments.clone()),
     };
     execute_tool(ctx, &final_call).await
 }
@@ -651,7 +692,15 @@ async fn auto_review(
     let mut msgs = transcript.to_vec();
     msgs.push(Message::user(&review_prompt));
 
-    match providers::chat(provider, &msgs, None, &format!("{system}\n\n(reviewer mode)"), Some(512)).await {
+    match providers::chat(
+        provider,
+        &msgs,
+        None,
+        &format!("{system}\n\n(reviewer mode)"),
+        Some(512),
+    )
+    .await
+    {
         Ok((reply, _, _)) => {
             let decision = serde_json::from_str::<serde_json::Value>(&reply)
                 .ok()
@@ -664,7 +713,10 @@ async fn auto_review(
                     "auto_reviewed": true,
                 }))
             } else {
-                Ok(tools::err_json(format!("{}: blocked by auto-review", call.name)))
+                Ok(tools::err_json(format!(
+                    "{}: blocked by auto-review",
+                    call.name
+                )))
             }
         }
         Err(e) => Ok(tools::err_json(format!(

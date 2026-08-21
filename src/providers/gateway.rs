@@ -4,7 +4,7 @@
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::sse::sse_events;
 use super::{EventStream, Message, ProviderConfig, StreamEvent};
@@ -19,13 +19,13 @@ fn chat_url(p: &ProviderConfig) -> String {
             return u;
         }
     }
-    let base = p.base_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| default_base().to_string());
+    let base = p
+        .base_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_base().to_string());
     let base = base.trim_end_matches('/').to_string();
-    if base.ends_with("/v1") {
-        format!("{base}/chat/completions")
-    } else {
-        format!("{base}/chat/completions")
-    }
+    format!("{base}/chat/completions")
 }
 
 fn serialize_messages(messages: &[Message]) -> Vec<Value> {
@@ -311,7 +311,7 @@ fn truncate(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         let mut out: String = s.chars().take(n).collect();
-        out.push_str("…");
+        out.push('…');
         out
     }
 }

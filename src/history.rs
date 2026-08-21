@@ -30,9 +30,17 @@ pub struct HistoryStore {
     pub path: PathBuf,
 }
 
+impl Default for HistoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistoryStore {
     pub fn new() -> Self {
-        Self { path: fx_home().join("history.jsonl") }
+        Self {
+            path: fx_home().join("history.jsonl"),
+        }
     }
 
     /// Append a prompt, compacting when the file outgrows its limits.
@@ -83,7 +91,7 @@ impl HistoryStore {
                 None => true,
             })
             .collect();
-        recs.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+        recs.sort_by_key(|r| std::cmp::Reverse(r.timestamp_ms));
         recs.truncate(limit.max(1));
         recs
     }
@@ -101,12 +109,12 @@ impl HistoryStore {
             return;
         }
         if records.len() > COMPACTION_RECORD_LIMIT {
-            records.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+            records.sort_by_key(|r| std::cmp::Reverse(r.timestamp_ms));
             records.truncate(COMPACTION_RECORD_LIMIT);
         }
         let mut body = String::new();
         // Re-write in chronological (append) order.
-        records.sort_by(|a, b| a.timestamp_ms.cmp(&b.timestamp_ms));
+        records.sort_by_key(|a| a.timestamp_ms);
         for r in &records {
             if let Ok(line) = serde_json::to_string(r) {
                 body.push_str(&line);

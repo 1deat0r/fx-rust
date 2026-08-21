@@ -1,11 +1,11 @@
 //! Web tools: web_fetch (fetch + text extraction) and web_search
 //! (DuckDuckGo lite HTML backend, no API key required).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::{ToolContext, arg};
+use super::{arg, ToolContext};
 
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
@@ -18,7 +18,10 @@ fn valid_url(url: &str) -> Result<reqwest::Url> {
         "http" | "https" => {}
         other => bail!("unsupported url scheme `{other}` (only http/https)"),
     }
-    if std::env::var("FX_ALLOW_LOCAL_URLS").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("FX_ALLOW_LOCAL_URLS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return Ok(u);
     }
     if let Some(host) = u.host_str() {
@@ -95,10 +98,23 @@ fn textify(html: &str) -> String {
                 let lower = tag.to_lowercase();
                 if lower.starts_with("script") || lower.starts_with("style") {
                     skip_depth += 1;
-                } else if matches!(lower.as_str(), "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "pre" | "section" | "td" | "blockquote") {
-                    if !out.is_empty() {
-                        out.push('\n');
-                    }
+                } else if matches!(
+                    lower.as_str(),
+                    "p" | "div"
+                        | "br"
+                        | "li"
+                        | "tr"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "pre"
+                        | "section"
+                        | "td"
+                        | "blockquote"
+                ) && !out.is_empty()
+                {
+                    out.push('\n');
                 }
             }
             _ if in_tag => {
@@ -170,7 +186,11 @@ pub async fn web_fetch(ctx: &ToolContext, args: &Value) -> Result<Value> {
         .timeout(FETCH_TIMEOUT)
         .user_agent("fxrs/0.1 (model tool) Rust")
         .build()?;
-    let resp = client.get(u.clone()).send().await.with_context(|| format!("fetching {u}"))?;
+    let resp = client
+        .get(u.clone())
+        .send()
+        .await
+        .with_context(|| format!("fetching {u}"))?;
     let status = resp.status();
     let content_type = resp
         .headers()
@@ -178,7 +198,10 @@ pub async fn web_fetch(ctx: &ToolContext, args: &Value) -> Result<Value> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let bytes = resp.bytes().await.with_context(|| format!("reading body of {u}"))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .with_context(|| format!("reading body of {u}"))?;
 
     const MAX_BYTES: usize = 2 * 1024 * 1024;
     let body = if bytes.len() > MAX_BYTES {
@@ -214,14 +237,20 @@ pub async fn web_search(_ctx: &ToolContext, args: &Value) -> Result<Value> {
         .user_agent("Mozilla/5.0 fxrs")
         .build()?;
     let url = format!("https://html.duckduckgo.com/html/?q={}", urlencode(query));
-    let resp = client.get(&url).send().await.context("DuckDuckGo request failed")?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .context("DuckDuckGo request failed")?;
     if !resp.status().is_success() {
         bail!("DuckDuckGo returned {}", resp.status());
     }
     let html = resp.text().await?;
     let results = parse_ddg(&html);
     if results.is_empty() {
-        return Ok(json!({ "query": query, "results": [], "note": "no results parsed (backend may be rate-limited)" }));
+        return Ok(
+            json!({ "query": query, "results": [], "note": "no results parsed (backend may be rate-limited)" }),
+        );
     }
     Ok(json!({ "query": query, "results": results }))
 }
@@ -252,7 +281,10 @@ fn parse_ddg(html: &str) -> Vec<Value> {
             Some(i) => i + 1,
             None => break,
         };
-        let title_end = rest[title_start..].find("</a>").map(|i| title_start + i).unwrap_or(rest.len());
+        let title_end = rest[title_start..]
+            .find("</a>")
+            .map(|i| title_start + i)
+            .unwrap_or(rest.len());
         let title = strip_tags(&rest[title_start..title_end]);
         rest = &rest[title_end..];
 

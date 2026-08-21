@@ -4,7 +4,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{bail, Context as _, Result};
 
 use crate::agent::{AgentOutput, AgentRequest, FinishReason};
 use crate::config;
@@ -81,9 +81,11 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                 println!("no sessions");
             } else {
                 let mut iter: Vec<_> = sessions;
-                if let Some(term) = args.clone().find(|a| a.as_str() == "--search").and_then(|_| {
-                    args.clone().skip_while(|a| a.as_str() != "--search").nth(1)
-                }) {
+                if let Some(term) = args
+                    .clone()
+                    .find(|a| a.as_str() == "--search")
+                    .and_then(|_| args.clone().skip_while(|a| a.as_str() != "--search").nth(1))
+                {
                     let q = term.to_lowercase();
                     iter.retain(|s| {
                         s.id.to_lowercase().contains(&q)
@@ -113,10 +115,16 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
             // `session last` / `session latest` resolve via the latest pointer.
-            if id.as_deref().map(|s| s == "last" || s == "latest").unwrap_or(false) {
+            if id
+                .as_deref()
+                .map(|s| s == "last" || s == "latest")
+                .unwrap_or(false)
+            {
                 id = store.latest(&cfg.workspace)?.map(|s| s.id);
             }
-            let id = id.ok_or_else(|| anyhow::anyhow!("usage: fxrs session <id|last> [--json] [--delete]"))?;
+            let id = id.ok_or_else(|| {
+                anyhow::anyhow!("usage: fxrs session <id|last> [--json] [--delete]")
+            })?;
             if wants_delete {
                 match store.delete(&cfg.workspace, &id)? {
                     true => println!("deleted session {id}"),
@@ -127,30 +135,37 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             match store.load(&cfg.workspace, &id)? {
                 Some(sess) => {
                     if wants_json {
-                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                            "id": sess.id,
-                            "workspace": sess.workspace,
-                            "created_ms": sess.created_ms,
-                            "updated_ms": sess.updated_ms,
-                            "model": sess.model,
-                            "mode": sess.mode.to_string(),
-                            "interactive": sess.interactive,
-                            "schema_version": sess.schema_version,
-                            "usage": {
-                                "input_tokens": sess.usage.input_tokens,
-                                "output_tokens": sess.usage.output_tokens,
-                                "total_tokens": sess.usage.total_tokens,
-                                "cost_usd": sess.usage.cost_usd,
-                                "steps": sess.usage.steps,
-                                "tool_calls": sess.usage.tool_calls,
-                            },
-                            "messages": sess.messages.len(),
-                            "grants": sess.grants,
-                        }))?);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "id": sess.id,
+                                "workspace": sess.workspace,
+                                "created_ms": sess.created_ms,
+                                "updated_ms": sess.updated_ms,
+                                "model": sess.model,
+                                "mode": sess.mode.to_string(),
+                                "interactive": sess.interactive,
+                                "schema_version": sess.schema_version,
+                                "usage": {
+                                    "input_tokens": sess.usage.input_tokens,
+                                    "output_tokens": sess.usage.output_tokens,
+                                    "total_tokens": sess.usage.total_tokens,
+                                    "cost_usd": sess.usage.cost_usd,
+                                    "steps": sess.usage.steps,
+                                    "tool_calls": sess.usage.tool_calls,
+                                },
+                                "messages": sess.messages.len(),
+                                "grants": sess.grants,
+                            }))?
+                        );
                     } else {
                         println!("id: {}", sess.id);
                         println!("workspace: {}", sess.workspace);
-                        println!("created: {} ({}s duration)", sess.created_ms, sess.updated_ms.saturating_sub(sess.created_ms) / 1000);
+                        println!(
+                            "created: {} ({}s duration)",
+                            sess.created_ms,
+                            sess.updated_ms.saturating_sub(sess.created_ms) / 1000
+                        );
                         println!("updated_ms: {}", sess.updated_ms);
                         println!("model: {}", sess.model);
                         println!("mode: {:?}", sess.mode);
@@ -191,7 +206,9 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             match crate::upgrade::latest_release() {
                 Ok(Some(latest)) if latest.trim_start_matches('v') != crate::version::VERSION => {
                     println!("latest release:  {latest}");
-                    println!("run `fxrs upgrade --install` to rebuild from source and install in PATH");
+                    println!(
+                        "run `fxrs upgrade --install` to rebuild from source and install in PATH"
+                    );
                 }
                 Ok(Some(latest)) => println!("already up to date ({latest})"),
                 Ok(None) => println!("no releases found yet on GitHub; nothing to upgrade"),
@@ -209,15 +226,18 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             if cfg.mcp_servers.is_empty() {
                 println!("no MCP servers configured");
                 println!("add an 'mcpServers' array to ~/.fx/settings.json or .fx.json");
-println!("  settings.json: mcpServers: [{{ name, command, args, env (keys are optional) }}]");
-println!("example: npx -y @modelcontextprotocol/server-fetch");
-
+                println!("  settings.json: mcpServers: [{{ name, command, args, env (keys are optional) }}]");
+                println!("example: npx -y @modelcontextprotocol/server-fetch");
             } else {
                 for srv in &cfg.mcp_servers {
                     let tools = crate::mcp::list_tools(srv);
                     println!("{} ({} tools):", srv.name, tools.len());
                     for t in &tools {
-                        println!("  {} -- {}", t.name, t.description.lines().next().unwrap_or(""));
+                        println!(
+                            "  {} -- {}",
+                            t.name,
+                            t.description.lines().next().unwrap_or("")
+                        );
                     }
                 }
             }
@@ -227,7 +247,10 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             let cfg = config::resolve(&cwd())?;
             use crate::hooks::discover;
             for def in crate::hooks::definitions().iter() {
-                println!("\x1b[1m{}\x1b[0m — {}", def.lifecycle_event, def.agent_loop_point);
+                println!(
+                    "\x1b[1m{}\x1b[0m — {}",
+                    def.lifecycle_event, def.agent_loop_point
+                );
                 println!("  purpose: {}", def.purpose);
                 let found = discover(def.kind, &cfg.workspace);
                 if found.is_empty() {
@@ -244,7 +267,14 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
         Some("permissions") => {
             let cfg = config::resolve(&cwd())?;
             println!("permission mode: {:?}", cfg.permission_mode.to_string());
-            println!("rules: {}", if cfg.permission_rules.is_empty() { "(default)" } else { "see settings" });
+            println!(
+                "rules: {}",
+                if cfg.permission_rules.is_empty() {
+                    "(default)"
+                } else {
+                    "see settings"
+                }
+            );
             for (k, v) in &cfg.permission_rules {
                 println!("  {k}: {v:?}");
             }
@@ -301,25 +331,40 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             let since = crate::usage::parse_period(period);
             let totals = crate::usage::UsageStore::new().aggregate(since);
             if wants_json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "period": period,
-                    "turns": totals.turns,
-                    "sessions": totals.sessions.len(),
-                    "input_tokens": totals.input_tokens,
-                    "output_tokens": totals.output_tokens,
-                    "total_tokens": totals.total_tokens,
-                    "tool_calls": totals.tool_calls,
-                    "steps": totals.steps,
-                    "cost_usd": totals.cost_usd,
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "period": period,
+                        "turns": totals.turns,
+                        "sessions": totals.sessions.len(),
+                        "input_tokens": totals.input_tokens,
+                        "output_tokens": totals.output_tokens,
+                        "total_tokens": totals.total_tokens,
+                        "tool_calls": totals.tool_calls,
+                        "steps": totals.steps,
+                        "cost_usd": totals.cost_usd,
+                    }))?
+                );
                 return Ok(0);
             }
             println!("fxrs usage (last {period}):");
             println!("  turns: {}", totals.turns);
             println!("  sessions: {}", totals.sessions.len());
-            println!("  tokens in:  {}	({:.1}M)", totals.input_tokens, totals.input_tokens as f64 / 1e6);
-            println!("  tokens out: {}	({:.1}M)", totals.output_tokens, totals.output_tokens as f64 / 1e6);
-            println!("  tokens total: {}	({:.1}M)", totals.total_tokens, totals.total_tokens as f64 / 1e6);
+            println!(
+                "  tokens in:  {}	({:.1}M)",
+                totals.input_tokens,
+                totals.input_tokens as f64 / 1e6
+            );
+            println!(
+                "  tokens out: {}	({:.1}M)",
+                totals.output_tokens,
+                totals.output_tokens as f64 / 1e6
+            );
+            println!(
+                "  tokens total: {}	({:.1}M)",
+                totals.total_tokens,
+                totals.total_tokens as f64 / 1e6
+            );
             println!("  tool calls: {}", totals.tool_calls);
             println!("  steps: {}", totals.steps);
             println!("  est. cost: ${:.4}", totals.cost_usd);
@@ -356,9 +401,18 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             let sess = store.load_or_error(&cfg.workspace, &id)?;
             for m in &sess.messages {
                 match m.role_str() {
-                    "user" => println!("\x1b[1;32muser\x1b[0m: {}", m.last_text().unwrap_or_default()),
-                    "assistant" => println!("\x1b[1;36massistant\x1b[0m: {}", m.last_text().unwrap_or_default()),
-                    "tool" => println!("\x1b[90mtool\x1b[0m: {}", shade_line(&m.last_text().unwrap_or_default())),
+                    "user" => println!(
+                        "\x1b[1;32muser\x1b[0m: {}",
+                        m.last_text().unwrap_or_default()
+                    ),
+                    "assistant" => println!(
+                        "\x1b[1;36massistant\x1b[0m: {}",
+                        m.last_text().unwrap_or_default()
+                    ),
+                    "tool" => println!(
+                        "\x1b[90mtool\x1b[0m: {}",
+                        shade_line(&m.last_text().unwrap_or_default())
+                    ),
                     _ => {}
                 }
             }
@@ -389,7 +443,12 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
                 println!("no history");
             }
             for r in &recs {
-                println!("{} {}: {}", r.timestamp_ms, workspace_basename(&r.workspace_root), shade_line(&r.text));
+                println!(
+                    "{} {}: {}",
+                    r.timestamp_ms,
+                    workspace_basename(&r.workspace_root),
+                    shade_line(&r.text)
+                );
             }
             Ok(0)
         }
@@ -420,15 +479,26 @@ fn workspace_basename(ws: &str) -> String {
 }
 
 fn cwd() -> PathBuf {
-    std::env::current_dir().context("getting current directory").unwrap_or_else(|_| PathBuf::from("."))
+    std::env::current_dir()
+        .context("getting current directory")
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn providers_summary(_cfg: &config::Config) -> String {
-    if std::env::var("AI_GATEWAY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+    if std::env::var("AI_GATEWAY_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
         "AI Gateway".into()
-    } else if std::env::var("ANTHROPIC_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+    } else if std::env::var("ANTHROPIC_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
         "Anthropic".into()
-    } else if std::env::var("AI_BASE_URL").map(|v| !v.is_empty()).unwrap_or(false) {
+    } else if std::env::var("AI_BASE_URL")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
         "OpenAI-compatible base URL".into()
     } else {
         "not configured (run `fxrs setup`)".into()
@@ -445,7 +515,10 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
     let home = config::fx_home();
     match std::fs::create_dir_all(&home) {
         Ok(_) => {}
-        Err(e) => out.push(('f', format!("cannot create ~/.fx ({}): {e}", home.display()))),
+        Err(e) => out.push((
+            'f',
+            format!("cannot create ~/.fx ({}): {e}", home.display()),
+        )),
     }
     let settings = config::settings_path();
     if settings.exists() {
@@ -455,20 +528,38 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
     }
 
     // 2. Model configured.
-    let has_gateway = std::env::var("AI_GATEWAY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
-    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
-    let has_ai = std::env::var("AI_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) && std::env::var("AI_BASE_URL").map(|v| !v.is_empty()).unwrap_or(false);
+    let has_gateway = std::env::var("AI_GATEWAY_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let has_ai = std::env::var("AI_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+        && std::env::var("AI_BASE_URL")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
     if !(has_gateway || has_anthropic || has_ai) {
         out.push(('f', "no model endpoint configured (AI_GATEWAY_API_KEY / ANTHROPIC_API_KEY / AI_BASE_URL+AI_API_KEY). run `fxrs setup`".into()));
     } else {
-        out.push(('w', "model endpoint configured; keys are not validated here".into()));
+        out.push((
+            'w',
+            "model endpoint configured; keys are not validated here".into(),
+        ));
     }
 
     // 3. Workspace writable.
     match std::fs::metadata(&cfg.workspace) {
         Ok(m) if m.is_dir() => {}
-        Ok(_) => out.push(('f', format!("workspace is not a directory: {}", cfg.workspace.display()))),
-        Err(e) => out.push(('f', format!("workspace missing: {} ({e})", cfg.workspace.display()))),
+        Ok(_) => out.push((
+            'f',
+            format!("workspace is not a directory: {}", cfg.workspace.display()),
+        )),
+        Err(e) => out.push((
+            'f',
+            format!("workspace missing: {} ({e})", cfg.workspace.display()),
+        )),
     }
 
     // 4. Sessions dir.
@@ -480,23 +571,47 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
     // 5. MCP server configs: command binaries exist when a command is given.
     for srv in &cfg.mcp_servers {
         if srv.transport.as_deref().unwrap_or("stdio") != "stdio" {
-            out.push(('w', format!("mcp server `{}`: non-stdio transport not yet ported", srv.name)));
+            out.push((
+                'w',
+                format!(
+                    "mcp server `{}`: non-stdio transport not yet ported",
+                    srv.name
+                ),
+            ));
             continue;
         }
         if let Some(cmd) = &srv.command {
             let path = PathBuf::from(cmd);
-            let found = if path.is_absolute() { path.is_file() } else { which_in_path(cmd) };
+            let found = if path.is_absolute() {
+                path.is_file()
+            } else {
+                which_in_path(cmd)
+            };
             if !found {
-                out.push(('w', format!("mcp server `{}`: command `{cmd}` not found in PATH", srv.name)));
+                out.push((
+                    'w',
+                    format!(
+                        "mcp server `{}`: command `{cmd}` not found in PATH",
+                        srv.name
+                    ),
+                ));
             }
         }
     }
 
     // 6. Hooks discovered (informational).
-    for kind in [crate::hooks::HookKind::PreToolUse, crate::hooks::HookKind::Stop, crate::hooks::HookKind::PostTurnEnd, crate::hooks::HookKind::AttentionRequired] {
+    for kind in [
+        crate::hooks::HookKind::PreToolUse,
+        crate::hooks::HookKind::Stop,
+        crate::hooks::HookKind::PostTurnEnd,
+        crate::hooks::HookKind::AttentionRequired,
+    ] {
         let found = crate::hooks::discover(kind, &cfg.workspace);
         if !found.is_empty() {
-            out.push(('w', format!("hook {}: {} script(s)", kind.event_name(), found.len())));
+            out.push((
+                'w',
+                format!("hook {}: {} script(s)", kind.event_name(), found.len()),
+            ));
         }
     }
 
@@ -510,7 +625,9 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
 }
 
 fn which_in_path(cmd: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else { return false };
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
     std::env::split_paths(&path).any(|d| d.join(cmd).is_file())
 }
 
@@ -620,12 +737,8 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
         eprintln!("fxrs error: {e}");
         return Ok(1);
     }
-    match out.finish_reason {
-        FinishReason::MaxSteps => eprintln!(
-            "fxrs: stopped after {} steps (max_agent_steps)",
-            out.steps
-        ),
-        _ => {}
+    if out.finish_reason == FinishReason::MaxSteps {
+        eprintln!("fxrs: stopped after {} steps (max_agent_steps)", out.steps)
     }
     println!(
         "\n[fxrs] session {} · {} steps · {} tool calls · {} tokens (${:.4})",
