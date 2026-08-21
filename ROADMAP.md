@@ -59,8 +59,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Gateway model catalog | `core/gateway/*`, `builtins/gateway.zig` | ✅ **P2 — `src/gateway.rs`**: fetch + parse `GET {base}/coding-agent/v1/models` (public endpoint, anonymous fallback on 401/403), full `ModelCatalogEntry` capability metadata (tool-use/vision/reasoning/caching/context/max-tokens), upstream sort (tool-use → tier → provider → release), failure classification (auth/rate-limited/unavailable/transport/malformed), loopback-only base overrides, lazy cache + `context_limits_for`; wired into `fxrs models [--json|--offline|--limit N]` |
 | Full MCP stack (rest) | `core/mcp/*` (30 files) | ✅ streamable HTTP + legacy SSE/http-SSE + protocol negotiation + json-schema resolver + stdio dispatcher landed (P2); elicitation, MCP OAuth (DCR), MRTR, tool subscription pending |
 | Full subagent system | `core/subagent/*` (21 files) + `ui/subagent/*` | domain, execution, manager, authority, approvals, communication, tool host, ui projection |
-| Background execution | `core/background/*`, `core/execution/*`, `tools/shell/background_process.zig` | 🟡 **P3 — `src/background.rs` + `background_process` tool**: detached launch (double-fork / setsid, own session + log), JSON store with reconcile-on-load (liveness + `__FX_EXIT_CODE__` marker), start/list/get_output/log/stop, SIGTERM→SIGKILL grace, `fxrs background` CLI + `/background` slash command, bash-permission classification; supervisor/process-tree/devbox executors pending |
-| Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | native/tmux/browser sessions, shell resolver, recovery, takeover |
+| Background execution | `core/background/*`, `core/execution/*`, `tools/shell/background_process.zig` | ✅ **P3 — `src/background.rs` + `background_process` tool + supervisor/tree**: detached launch (double-fork / setsid, own session + log), JSON store with reconcile-on-load (liveness + `__FX_EXIT_CODE__` marker), start/list/get_output/log/stop, SIGTERM→SIGKILL grace, session-tagged records, `supervise` (live ps: RSS/elapsed/CPU/children), `tree` (descendant tree), `stop_tree` (group + descendant kill), restore-on-resume banner, `fxrs background` + `/background`; devbox executor pending |
+| Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | 🟡 **P3 — `src/terminal.rs` + `terminal` tool (tmux slice)**: per-session tmux socket, create/list/send/read (scrollback, ANSI strip, clear_after)/resize/stop, store + tmux-liveness reconcile, `fxrs terminal` + `/terminal`; native PTY, browser terminal, recovery/takeover pending |
 | Sessions full | `core/session/*` (40 files) | codec/migration/pointer/usage/delete/tape/metadata landed (P1); prompt history (upstream record shape + compaction) landed (P1); result store, artifacts pending |
 | Config catalog | `core/config/settings_catalog.zig`, `settings_store.zig`, `context_limits.zig`, `input_appearance.zig`, `presentation_mode.zig` | ✅ settings catalog + context limits landed (P1): `src/settings_catalog.rs`, `src/context.rs`, resolved in config + `fxrs settings`/`/settings` |
 | Permissions full | `core/permissions/*` (13 files) | sandbox + deterministic auto-classifier landed (P1); ApprovalRequest/ApprovalDecision + structured prompt + AttentionRequired on interactive approval landed (P1); command admission, direct command pending |
@@ -98,8 +98,8 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | mcp (stdio / streamable-http / http-sse) | ✅ |
 | semantic_search | ✅ (BM25-lite, P1) |
 | read_tool_result (session) | ❌ |
-| background_process (shell) | ❌ |
-| terminal · browser_terminal | ❌ |
+| background_process (shell) | ✅ (supervise/tree/stop-tree) |
+| terminal · browser_terminal | 🟡 (tmux sessions; browser pending) |
 | web content / html_to_markdown / http_fetch / url_policy (as tools) | ❌ (internal subset) |
 
 ## Phased plan

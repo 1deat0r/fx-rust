@@ -24,6 +24,7 @@ pub enum Slash {
     Compact,
     Workspace,
     Background(Option<String>),
+    Terminal(Option<String>),
     Login,
     Logout,
     /// Unknown / unimplemented slash command (kept so the shell can explain).
@@ -185,6 +186,13 @@ pub fn catalog() -> &'static [Spec] {
             ready: true,
         },
         Spec {
+            name: "terminal",
+            aliases: &["term"],
+            usage: "/terminal [get <id> | send <id> <text> | stop <id>]",
+            description: "list, inspect, drive, or stop terminal sessions",
+            ready: true,
+        },
+        Spec {
             name: "login",
             aliases: &[],
             usage: "/login",
@@ -239,6 +247,7 @@ pub fn parse(line: &str) -> Option<Slash> {
         "compact" => Slash::Compact,
         "workspace" => Slash::Workspace,
         "background" | "bg" => Slash::Background(arg.clone()),
+        "terminal" | "term" => Slash::Terminal(arg.clone()),
         "login" => Slash::Login,
         "logout" => Slash::Logout,
         other => Slash::Unknown(other.to_string()),

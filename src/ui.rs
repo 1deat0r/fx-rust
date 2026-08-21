@@ -454,6 +454,58 @@ pub async fn run_interactive(
                         ),
                     }
                 }
+                Slash::Terminal(arg) => {
+                    let mut store = match crate::terminal::TerminalStore::open() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("terminal store error: {e:#}");
+                            continue;
+                        }
+                    };
+                    let (sub, id_arg) =
+                        match arg.as_deref().unwrap_or("").split_once(char::is_whitespace) {
+                            Some((s, rest)) => (s, rest.trim().to_string()),
+                            None => (arg.as_deref().unwrap_or("list"), String::new()),
+                        };
+                    let id: Option<&str> = if id_arg.is_empty() {
+                        None
+                    } else {
+                        Some(id_arg.as_str())
+                    };
+                    match (sub, id) {
+                        ("list" | "l", _) => {
+                            let records = store.list().to_vec();
+                            if records.is_empty() {
+                                println!("no terminal sessions");
+                            } else {
+                                println!("{}", crate::terminal::render_table(&records));
+                            }
+                        }
+                        ("get" | "read", Some(id)) => match store.read(id, 200, 16 * 1024, false, false) {
+                            Ok(text) => println!("{text}"),
+                            Err(e) => println!("{e:#}"),
+                        },
+                        ("send", Some(id)) => {
+                            let rest = arg.as_deref().unwrap_or("");
+                            let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+                            if parts.len() < 2 || parts[1].trim().is_empty() {
+                                println!("usage: /terminal send <id> <text>");
+                                continue;
+                            }
+                            match store.send(id, parts[1].trim(), true) {
+                                Ok(()) => println!("sent to {id}"),
+                                Err(e) => println!("{e:#}"),
+                            }
+                        }
+                        ("stop", Some(id)) => match store.stop(id) {
+                            Ok(r) => println!("stopped {} (pid {})", r.id, r.pid),
+                            Err(e) => println!("{e:#}"),
+                        },
+                        (other, _) => println!(
+                            "unknown terminal subcommand `{other}` (list | get <id> | send <id> <text> | stop <id>)"
+                        ),
+                    }
+                }
                 Slash::Compact => println!("(not ready: context compaction is a later phase)"),
                 Slash::Login => println!("(not ready: OAuth login is a later phase)"),
                 Slash::Logout => println!("(not ready: OAuth logout is a later phase)"),

@@ -9,7 +9,7 @@ code with a single keystroke or fully hands-free.
 
 ## Implemented surface
 
-- **Toolkit (22 built-ins + MCP)**: bash/shell, filesystem (read, write, edit,
+- **Toolkit (23 built-ins + MCP)**: bash/shell, filesystem (read, write, edit,
   delete, rename, copy, mkdir, list, glob, grep, info), web_search / web_fetch
   (SSRF-guarded URL policy, HTML→Markdown extraction), **semantic_search**
   (BM25-lite ranked workspace search), memory, skills, install_skill,
@@ -21,13 +21,23 @@ code with a single keystroke or fully hands-free.
   `~/.fx/hooks/<Event>` and `<workspace>/.fx/hooks/<Event>` speaking
   Claude-Code-style stdin-JSON / stdout `{"decision": ...}`; hook failures
   never abort the agent. Inspect with `fxrs hooks`.
-- **Background processes**: the `background_process` tool starts long-running
-  commands detached (own session via setsid/double-fork, log file under
-  `~/.fx/background/`), then supports `list` / `get_output` (tail) / `log` /
-  `stop` (SIGTERM → SIGKILL grace). A `__FX_EXIT_CODE__` marker records the
-  real exit code, and the store reconciles liveness on load so resumed
-  sessions see accurate status. Inspect from the shell with `fxrs background`
-  or `/background`.
+- **Background processes + supervisor**: the `background_process` tool starts
+  long-running commands detached (own session via setsid/double-fork, log file
+  under `~/.fx/background/`), then supports `list` / `get_output` (tail) /
+  `log` / `supervise` (live ps snapshot: RSS, elapsed, CPU, child count) /
+  `tree` (descendant process tree) / `stop_tree` (kill the process group and
+  every descendant; SIGTERM → SIGKILL grace) / `stop`. Records carry the owning
+  agent session id; a `__FX_EXIT_CODE__` marker records the real exit code and
+  the store reconciles liveness on load, so a resumed agent sees accurate
+  status and a `N background process(es) running` banner. Inspect from the
+  shell with `fxrs background` or `/background`.
+- **Terminal sessions (tmux)**: the `terminal` tool creates real persistent
+  terminal sessions (each on its own tmux socket, never touching your server)
+  and supports `create` / `list` / `send` (literal keystrokes + Enter) / `read`
+  (capture-pane with scrollback; ANSI stripped by default, `clear_after`
+  supported) / `resize` / `stop`. Sessions survive agent turns and are
+  reconciled against tmux on load. Drive from the shell with `fxrs terminal`
+  or `/terminal`.
 - **MCP clients (stdio + remote)**: `mcpServers` array in `~/.fx/settings.json`,
   workspace settings, or repo `.fx.json`. Three transports: `stdio` (default,
   `command`/`args`/`env`), `http` / `streamable-http` (modern streamable HTTP),

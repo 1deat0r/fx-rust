@@ -508,6 +508,53 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             }
             Ok(0)
         }
+        Some("terminal") | Some("term") => {
+            let args: Vec<String> = args.cloned().collect();
+            let sub = args.first().map(|s| s.as_str()).unwrap_or("list");
+            let mut store = crate::terminal::TerminalStore::open()?;
+            match sub {
+                "list" | "ls" => {
+                    let records = store.list().to_vec();
+                    if records.is_empty() {
+                        println!("no terminal sessions");
+                        println!("create one with the terminal tool inside an agent session");
+                    } else {
+                        println!("{}", crate::terminal::render_table(&records));
+                    }
+                }
+                "get" | "read" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs terminal get <id>"))?;
+                    let text = store.read(id, 200, 64 * 1024, false, false)?;
+                    print!("{text}");
+                    if !text.ends_with('\n') {
+                        println!();
+                    }
+                }
+                "send" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs terminal send <id> <text>"))?;
+                    let input = args
+                        .get(2)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs terminal send <id> <text>"))?;
+                    store.send(id, input, true)?;
+                    println!("sent {} chars to {}", input.chars().count(), id);
+                }
+                "stop" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs terminal stop <id>"))?;
+                    let r = store.stop(id)?;
+                    println!("stopped {} (pid {})", r.id, r.pid);
+                }
+                other => bail!(
+                    "unknown terminal subcommand `{other}` (list | get <id> | send <id> <text> | stop <id>)"
+                ),
+            }
+            Ok(0)
+        }
         Some("setup") => {
             println!("fxrs needs a model endpoint. Configure one of:");
             println!("  AI_GATEWAY_API_KEY=...            (Vercel AI Gateway, default)");

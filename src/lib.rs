@@ -32,6 +32,7 @@ pub mod settings_catalog;
 pub mod shell_command;
 pub mod slash_commands;
 pub mod tape;
+pub mod terminal;
 pub mod tool_prep;
 pub mod tools;
 pub mod ui;
