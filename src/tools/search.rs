@@ -273,6 +273,7 @@ mod tests {
             workspace: ws.into(),
             max_result_bytes: 65536,
             interactive: false,
+            session_id: String::new(),
             config: Arc::new(crate::config::Config {
                 workspace: ws.into(),
                 model: "m".into(),

@@ -5,7 +5,7 @@
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
-use crate::background::{BackgroundStore, BgStatus};
+use crate::background::{process_table, BackgroundStore, BgStatus, SupervisedRecord};
 
 use super::{arg, arg_i64, ToolContext};
 
@@ -25,14 +25,16 @@ pub async fn background_process(ctx: &ToolContext, args: &Value) -> Result<Value
                 .and_then(|v| v.as_str())
                 .map(|s| ctx.resolve(s))
                 .unwrap_or_else(|| ctx.workspace.clone());
-            let record = store.start(command, &cwd, name)?;
+            let session_id = (!ctx.session_id.is_empty()).then_some(ctx.session_id.as_str());
+            let record = store.start_with_session(command, &cwd, name, session_id)?;
             Ok(json!({
                 "status": "started",
                 "process_id": record.id,
                 "pid": record.pid,
                 "command": record.command,
                 "log_path": record.log_path,
-                "note": "use `get_output` to read output and `stop` to terminate",
+                "session_id": record.session_id,
+                "note": "use `get_output` to read output, `supervise` for liveness, and `stop`/`stop_tree` to terminate",
             }))
         }
         "list" => {
@@ -48,6 +50,7 @@ pub async fn background_process(ctx: &ToolContext, args: &Value) -> Result<Value
                         "exit_code": r.exit_code,
                         "command": r.command,
                         "log_path": r.log_path,
+                        "session_id": r.session_id,
                     })
                 })
                 .collect();
@@ -72,6 +75,54 @@ pub async fn background_process(ctx: &ToolContext, args: &Value) -> Result<Value
                 "output": text,
             }))
         }
+        "supervise" => {
+            let rows: Vec<Value> = store
+                .supervise()
+                .into_iter()
+                .map(|s| supervised_json(&s))
+                .collect();
+            let counts = store
+                .supervise()
+                .iter()
+                .fold((0usize, 0usize), |(run, total), s| {
+                    (run + usize::from(s.alive), total + 1)
+                });
+            Ok(json!({
+                "status": "ok",
+                "running": counts.0,
+                "total": counts.1,
+                "processes": rows,
+            }))
+        }
+        "tree" => {
+            let id = arg(args, "process_id")
+                .ok_or_else(|| anyhow::anyhow!("missing required argument `process_id`"))?;
+            let record = store
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("unknown background process id `{id}`"))?;
+            let table = process_table();
+            Ok(json!({
+                "process_id": id,
+                "pid": record.pid,
+                "status": status_str(record.status),
+                "tree": crate::background::render_tree(record, &table),
+            }))
+        }
+        "stop_tree" | "stop-tree" => {
+            let id = arg(args, "process_id")
+                .ok_or_else(|| anyhow::anyhow!("missing required argument `process_id`"))?;
+            let timeout_ms = arg_i64(args, "timeout_ms")
+                .unwrap_or(5000)
+                .clamp(500, 30_000) as u64;
+            let record = store.stop_tree(id, timeout_ms)?;
+            Ok(json!({
+                "status": "stopped",
+                "process_id": record.id,
+                "pid": record.pid,
+                "exit_code": record.exit_code,
+                "note": "process tree terminated",
+            }))
+        }
         "stop" => {
             let id = arg(args, "process_id")
                 .ok_or_else(|| anyhow::anyhow!("missing required argument `process_id`"))?;
@@ -87,8 +138,28 @@ pub async fn background_process(ctx: &ToolContext, args: &Value) -> Result<Value
                 "note": "process terminated",
             }))
         }
-        other => bail!("unknown background_process action: {other} (expected start, list, get_output, log, stop)"),
+        other => bail!("unknown background_process action: {other} (expected start, list, get_output, log, supervise, tree, stop_tree, stop)"),
     }
+}
+
+fn supervised_json(s: &SupervisedRecord) -> Value {
+    json!({
+        "process_id": s.record.id,
+        "name": s.record.name,
+        "pid": s.record.pid,
+        "status": if s.alive { "running" } else { status_str(s.record.status) },
+        "exit_code": s.record.exit_code,
+        "alive": s.alive,
+        "children_alive": s.children_alive,
+        "rss_kb": s.rss_kb,
+        "etimes_secs": s.etimes_secs,
+        "cpu_percent": s.cpu_percent,
+        "command": s.record.command,
+        "cwd": s.record.cwd,
+        "log_path": s.record.log_path,
+        "session_id": s.record.session_id,
+        "started_at_ms": s.record.started_at_ms,
+    })
 }
 
 fn status_str(s: BgStatus) -> &'static str {

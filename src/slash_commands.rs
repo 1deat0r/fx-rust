@@ -180,8 +180,8 @@ pub fn catalog() -> &'static [Spec] {
         Spec {
             name: "background",
             aliases: &["bg"],
-            usage: "/background [get <id> | stop <id>]",
-            description: "list, inspect, or stop background processes",
+            usage: "/background [supervise | tree <id> | get <id> | stop <id> | stop-tree <id>]",
+            description: "list, supervise, tree, inspect, or stop background processes",
             ready: true,
         },
         Spec {

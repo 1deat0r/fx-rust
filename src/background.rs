@@ -39,6 +39,11 @@ pub struct BackgroundRecord {
     pub status: BgStatus,
     pub exit_code: Option<i32>,
     pub log_path: String,
+    /// Agent session that launched this process ("" when unknown). Used for
+    /// restore-on-resume reporting: a resumed agent can see which daemons
+    /// belong to it.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 impl Default for BackgroundRecord {
@@ -53,6 +58,7 @@ impl Default for BackgroundRecord {
             status: BgStatus::Running,
             exit_code: None,
             log_path: String::new(),
+            session_id: None,
         }
     }
 }
@@ -175,6 +181,17 @@ impl BackgroundStore {
         cwd: &Path,
         name: Option<&str>,
     ) -> Result<BackgroundRecord> {
+        self.start_with_session(command, cwd, name, None)
+    }
+
+    /// `start` plus an optional owning agent session id (restore-on-resume).
+    pub fn start_with_session(
+        &mut self,
+        command: &str,
+        cwd: &Path,
+        name: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<BackgroundRecord> {
         let command = command.trim();
         if command.is_empty() {
             bail!("background_process start: command must not be empty");
@@ -232,6 +249,7 @@ impl BackgroundStore {
             status: BgStatus::Running,
             exit_code: None,
             log_path: log_path.display().to_string(),
+            session_id: session_id.map(|s| s.to_string()),
         };
         self.records.push(record.clone());
         self.save()?;
@@ -315,6 +333,341 @@ impl BackgroundStore {
         self.save()?;
         Ok(record)
     }
+}
+
+/// One row of `ps` output captured for supervision (snapshot, no cross-snapshot
+/// CPU sampling — `cpu_percent` is the lifetime average reported by ps).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub ppid: u32,
+    pub pgid: u32,
+    pub stat: String,
+    pub rss_kb: u64,
+    pub etimes_secs: u64,
+    pub cpu_percent: f64,
+    pub command: String,
+}
+
+/// Snapshot the live process table once (`ps -eo pid,ppid,pgid,stat,rss,etimes,pcpu,comm`).
+/// A malformed row is skipped; a process table that cannot be read at all
+/// returns an empty slice (callers degrade to pid-alive checks).
+pub fn process_table() -> Vec<ProcessInfo> {
+    let out = Command::new("ps")
+        .args(["-eo", "pid=,ppid=,pgid=,stat=,rss=,etimes=,pcpu=,comm="])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    let out = match out {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 8 {
+            continue;
+        }
+        let pid: u32 = match f[0].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let ppid: u32 = f[1].parse().unwrap_or(0);
+        let pgid: u32 = f[2].parse().unwrap_or(pid);
+        let rss_kb: u64 = f[4].parse().unwrap_or(0);
+        let etimes_secs: u64 = f[5].parse().unwrap_or(0);
+        let cpu_percent: f64 = f[6].parse().unwrap_or(0.0);
+        rows.push(ProcessInfo {
+            pid,
+            ppid,
+            pgid,
+            stat: f[3].to_string(),
+            rss_kb,
+            etimes_secs,
+            cpu_percent,
+            command: f[7..].join(" "),
+        });
+    }
+    rows
+}
+
+/// Direct children of `pid` according to a process-table snapshot.
+pub fn children_of(table: &[ProcessInfo], pid: u32) -> Vec<&ProcessInfo> {
+    let mut out: Vec<&ProcessInfo> = table.iter().filter(|r| r.ppid == pid).collect();
+    out.sort_by_key(|r| r.pid);
+    out
+}
+
+/// All descendants of `pid`, breadth-first (children of each node ordered by
+/// pid), so parents always appear before their children.
+pub fn descendants(table: &[ProcessInfo], pid: u32) -> Vec<&ProcessInfo> {
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(pid);
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(pid);
+    while let Some(cur) = queue.pop_front() {
+        let kids = children_of(table, cur);
+        for k in kids {
+            if seen.insert(k.pid) {
+                out.push(k);
+                queue.push_back(k.pid);
+            }
+        }
+    }
+    out
+}
+
+/// A background record plus live supervision data (None when no longer alive).
+#[derive(Debug, Clone, Serialize)]
+pub struct SupervisedRecord {
+    #[serde(flatten)]
+    pub record: BackgroundRecord,
+    pub alive: bool,
+    pub rss_kb: Option<u64>,
+    pub etimes_secs: Option<u64>,
+    pub cpu_percent: Option<f64>,
+    /// Number of live descendants at snapshot time.
+    pub children_alive: usize,
+}
+
+impl BackgroundStore {
+    /// Enrich every record with live process data (one `ps` snapshot shared
+    /// across records) and counts of live children.
+    pub fn supervise(&self) -> Vec<SupervisedRecord> {
+        let table = process_table();
+        self.records
+            .iter()
+            .map(|r| {
+                let info = table.iter().find(|p| p.pid == r.pid).cloned();
+                let alive = r.status == BgStatus::Running && info.is_some();
+                let children_alive = if info.is_some() {
+                    descendants(&table, r.pid).len()
+                } else {
+                    0
+                };
+                SupervisedRecord {
+                    record: r.clone(),
+                    alive,
+                    rss_kb: info.as_ref().map(|i| i.rss_kb),
+                    etimes_secs: info.as_ref().map(|i| i.etimes_secs),
+                    cpu_percent: info.as_ref().map(|i| i.cpu_percent),
+                    children_alive,
+                }
+            })
+            .collect()
+    }
+
+    /// Process group id of a record's pid (0 when unknown/unreadable).
+    pub fn pgid_of(&self, pid: u32) -> u32 {
+        let table = process_table();
+        table
+            .iter()
+            .find(|p| p.pid == pid)
+            .map(|p| p.pgid)
+            .unwrap_or(0)
+    }
+
+    /// Stop a process and its whole tree: signal the process group first (the
+    /// double-fork launcher makes the stored pid a session/group leader), then
+    /// any descendants that escaped into their own groups, waiting `timeout_ms`
+    /// between SIGTERM and SIGKILL.
+    pub fn stop_tree(&mut self, id: &str, timeout_ms: u64) -> Result<BackgroundRecord> {
+        let idx = self
+            .records
+            .iter()
+            .position(|r| r.id == id)
+            .ok_or_else(|| anyhow!("unknown background process id `{id}`"))?;
+        if self.records[idx].status != BgStatus::Running {
+            bail!("background process `{id}` is not running");
+        }
+        let pid = self.records[idx].pid;
+
+        let snapshot = process_table();
+        // The launcher starts the command under setsid, so pid is normally a
+        // session+group leader: signal the whole group with kill -- -pid.
+        let pgid = snapshot.iter().find(|p| p.pid == pid).map(|p| p.pgid);
+        let mut targets: Vec<u32> = Vec::new();
+        // All descendants, group members inclusive (children of the leader are
+        // in its group unless they called setsid themselves).
+        targets.extend(descendants(&snapshot, pid).iter().map(|p| p.pid));
+        if !targets.contains(&pid) {
+            targets.push(pid);
+        }
+        // Terminate: a group signal for the leader's group (one call, covers
+        // every member); individual signals for descendants that escaped into
+        // their own group (deepest first so parents can reap cleanly).
+        let leader_alive = snapshot.iter().any(|p| p.pid == pid);
+        let group_signal = pgid.filter(|g| *g == pid && leader_alive);
+        let mut escaped: Vec<u32> = if group_signal.is_some() {
+            // Anything whose group differs from the leader's group.
+            snapshot
+                .iter()
+                .filter(|p| targets.contains(&p.pid) && p.pid != pid && p.pgid != pid)
+                .map(|p| p.pid)
+                .collect()
+        } else {
+            targets.clone()
+        };
+        escaped.sort_by_key(|p| std::cmp::Reverse(*p));
+        if let Some(g) = group_signal {
+            sync_group(g, 15);
+        }
+        for t in &escaped {
+            sync_signal(*t, 15);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let table = process_table();
+            let any_alive = targets.iter().any(|t| {
+                let info = table.iter().find(|p| p.pid == *t);
+                info.is_some() || (info.is_none() && pid_alive(*t))
+            });
+            if !any_alive {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        // SIGKILL survivors (group first, then individually).
+        let table = process_table();
+        let survivors: Vec<u32> = targets
+            .iter()
+            .copied()
+            .filter(|t| table.iter().any(|p| p.pid == *t) || pid_alive(*t))
+            .collect();
+        if let Some(g) = group_signal {
+            sync_group(g, 9);
+        }
+        for t in &survivors {
+            sync_signal(*t, 9);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let code = parse_exit_code(Path::new(&self.records[idx].log_path));
+        self.records[idx].status = BgStatus::Exited;
+        self.records[idx].exit_code = code;
+        let record = self.records[idx].clone();
+        self.save()?;
+        Ok(record)
+    }
+}
+
+/// Render a supervision table (used by `fxrs background supervise` and
+/// `/background supervise`).
+pub fn render_supervise(records: &[SupervisedRecord]) -> String {
+    let mut lines = vec![format!(
+        "{:<10} {:<8} {:<6} {:<7} {:<7} {:<6} {:<6} {}",
+        "ID", "STATUS", "PID", "RSS-KB", "ELAPSED", "CPU%", "KIDS", "COMMAND"
+    )];
+    let mut sorted: Vec<&SupervisedRecord> = records.iter().collect();
+    sorted.sort_by_key(|s| std::cmp::Reverse(s.record.started_at_ms));
+    let mut running = 0usize;
+    for s in sorted {
+        let (status, alive) = match (&s.record.status, s.alive) {
+            (BgStatus::Running, true) => {
+                running += 1;
+                ("running", "")
+            }
+            (BgStatus::Running, false) => ("exited?", ""),
+            (BgStatus::Exited, _) => ("exited", ""),
+            (BgStatus::Failed, _) => ("failed", ""),
+        };
+        let rss = s
+            .rss_kb
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into());
+        let elapsed = s
+            .etimes_secs
+            .map(render_elapsed)
+            .unwrap_or_else(|| "—".into());
+        let cpu = s
+            .cpu_percent
+            .map(|v| format!("{v:.0}%"))
+            .unwrap_or_else(|| "—".into());
+        let kids = s.children_alive.to_string();
+        let name = s
+            .record
+            .name
+            .as_deref()
+            .map(|n| format!("[{n}] "))
+            .unwrap_or_default();
+        let cmd: String = s.record.command.chars().take(40).collect();
+        lines.push(format!(
+            "{:<10} {:<8} {:<6} {:<7} {:<7} {:<6} {:<6} {}{}{}",
+            s.record.id, status, s.record.pid, rss, elapsed, cpu, kids, name, cmd, alive
+        ));
+    }
+    lines.push(format!(
+        "
+{} running · {} total",
+        running,
+        records.len()
+    ));
+    lines.join("\n")
+}
+
+fn render_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// Render a process tree for one background record (used by `fxrs background
+/// tree <id>` and the tool's `tree` action).
+pub fn render_tree(record: &BackgroundRecord, table: &[ProcessInfo]) -> String {
+    let mut lines = vec![format!(
+        "{} (pid {}){}",
+        record.id,
+        record.pid,
+        if record.status == BgStatus::Running {
+            " · running"
+        } else {
+            " · not running"
+        }
+    )];
+    let kids = children_of(table, record.pid);
+    if kids.is_empty() {
+        lines.push("  └─ (no children)".into());
+    } else {
+        render_tree_nodes(&mut lines, table, &kids, "");
+    }
+    lines.join("\n")
+}
+
+fn render_tree_nodes(
+    lines: &mut Vec<String>,
+    table: &[ProcessInfo],
+    kids: &[&ProcessInfo],
+    indent: &str,
+) {
+    for (i, kid) in kids.iter().enumerate() {
+        let last = i == kids.len() - 1;
+        let branch = if last { "└─ " } else { "├─ " };
+        lines.push(format!("{indent}{branch}{}{}", kid.pid, kid.command));
+        let sub = children_of(table, kid.pid);
+        let next_indent = format!("{indent}{}", if last { "   " } else { "│  " });
+        render_tree_nodes(lines, table, &sub, &next_indent);
+    }
+}
+
+fn sync_group(pgid: u32, signal: i32) {
+    let _: std::io::Result<std::process::ExitStatus> = Command::new("kill")
+        .arg(format!("-- -{signal}"))
+        .arg(pgid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Does `pid` exist? (`kill -0`)
@@ -437,6 +790,7 @@ mod tests {
             exit_code: None,
             log_path: home.join("gone.log").display().to_string(),
             name: None,
+            session_id: Some("sess-123".into()),
         });
         std::fs::write(home.join("gone.log"), "x\n__FX_EXIT_CODE__=42\n").unwrap();
         store.reconcile();
@@ -454,5 +808,100 @@ mod tests {
         });
         let second = store.next_id();
         assert_ne!(store.records[0].id, second);
+    }
+
+    #[test]
+    fn old_store_files_without_session_id_still_load() {
+        let dir = std::env::temp_dir().join(format!("fxrs-bg-sessid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("background.json");
+        // A record serialized before session_id existed.
+        let legacy = serde_json::json!({
+            "version": 1,
+            "records": [{
+                "id": "abc",
+                "name": null,
+                "command": "true",
+                "cwd": ".",
+                "pid": 1,
+                "started_at_ms": 0,
+                "status": "exited",
+                "exit_code": 0,
+                "log_path": "/dev/null"
+            }]
+        });
+        std::fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
+        // Load goes through fx_home; we can't override config here, so parse
+        // directly through serde (the load path in production uses the same
+        // deserializer, which must tolerate the missing field).
+        let store: BackgroundStore = serde_json::from_value(legacy).unwrap();
+        assert_eq!(store.records[0].session_id, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn descendants_and_children_work() {
+        let mk = |pid: u32, ppid: u32| ProcessInfo {
+            pid,
+            ppid,
+            pgid: 1,
+            stat: "S".into(),
+            rss_kb: 0,
+            etimes_secs: 0,
+            cpu_percent: 0.0,
+            command: format!("p{pid}"),
+        };
+        let table = vec![mk(1, 0), mk(2, 1), mk(3, 1), mk(4, 2), mk(5, 4), mk(6, 3)];
+        let kids = children_of(&table, 1);
+        let pids: Vec<u32> = kids.iter().map(|k| k.pid).collect();
+        assert_eq!(pids, vec![2, 3]);
+        let desc = descendants(&table, 1);
+        let dpids: Vec<u32> = desc.iter().map(|d| d.pid).collect();
+        // breadth-first, ordered by pid: 2,3,4,6,5 — 5 is deepest so appears last
+        // but BFS visits 2's children (4) before 3's children (6), then 4's child (5).
+        assert_eq!(dpids, vec![2, 3, 4, 6, 5]);
+        assert!(descendants(&table, 6).is_empty());
+    }
+
+    #[test]
+    fn supervise_marks_missing_pids_not_alive() {
+        let mut store = BackgroundStore::default();
+        store.records.push(BackgroundRecord {
+            id: "ghost".into(),
+            command: "true".into(),
+            cwd: ".".into(),
+            pid: u32::MAX - 1,
+            started_at_ms: 0,
+            status: BgStatus::Running,
+            exit_code: None,
+            log_path: "/dev/null".into(),
+            name: None,
+            session_id: None,
+        });
+        // process_table() reads real ps; a pid that cannot exist reports none.
+        let supervised = store.supervise();
+        assert_eq!(supervised.len(), 1);
+        assert!(!supervised[0].alive);
+    }
+
+    #[test]
+    fn render_supervise_never_empty_and_totals() {
+        let mut store = BackgroundStore::default();
+        store.records.push(BackgroundRecord {
+            id: "r1".into(),
+            command: "x".into(),
+            cwd: ".".into(),
+            pid: 1,
+            started_at_ms: 5,
+            status: BgStatus::Exited,
+            exit_code: Some(0),
+            log_path: "/dev/null".into(),
+            name: None,
+            session_id: None,
+        });
+        let text = render_supervise(&store.supervise());
+        assert!(text.contains("r1"));
+        assert!(text.contains("1 total"));
     }
 }

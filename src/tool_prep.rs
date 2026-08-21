@@ -207,6 +207,7 @@ mod tests {
                 update_channel: "stable".into(),
             }),
             store: crate::sessions::SessionStore::new().unwrap(),
+            session_id: String::new(),
         }
     }
 

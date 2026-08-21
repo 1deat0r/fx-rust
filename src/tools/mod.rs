@@ -40,6 +40,9 @@ pub struct ToolContext {
     pub config: Arc<Config>,
     /// Session store for nested agent runs (subagent tool).
     pub store: crate::sessions::SessionStore,
+    /// Owning agent session id (empty outside an agent run). Tagged onto
+    /// background processes for restore-on-resume reporting.
+    pub session_id: String,
 }
 
 impl ToolContext {
@@ -243,11 +246,11 @@ pub fn schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "background_process",
-                "description": "Start and manage long-running background processes: servers, watchers, builds. Commands run detached in their own session with output written to a log file, so they keep running after the tool returns. Actions: start (launch), list, get_output/log (tail the log), stop (terminate with a grace period). Sensitive.",
+                "description": "Start and manage long-running background processes: servers, watchers, builds. Commands run detached in their own session with output written to a log file, so they keep running after the tool returns. Actions: start (launch), list, get_output/log (tail the log), supervise (live ps data + counts), tree (descendant process tree), stop_tree (terminate the process and all its descendants), stop (terminate with a grace period). Sensitive.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["start", "list", "get_output", "log", "stop"], "description": "What to do (default list)."},
+                        "action": {"type": "string", "enum": ["start", "list", "get_output", "log", "supervise", "tree", "stop_tree", "stop"], "description": "What to do (default list)."},
                         "command": {"type": "string", "description": "The shell command to run. Required for start."},
                         "name": {"type": "string", "description": "Optional short label for the process."},
                         "cwd": {"type": "string", "description": "Working directory (relative to workspace). Defaults to the workspace."},

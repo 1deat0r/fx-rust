@@ -144,6 +144,7 @@ pub async fn run(
         interactive: req.interactive,
         config: config.clone(),
         store: store.clone(),
+        session_id: session_id.clone(),
     };
 
     let max_steps = config.max_agent_steps;

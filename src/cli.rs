@@ -456,6 +456,26 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                         println!("{}", crate::background::render_table(&records));
                     }
                 }
+                "supervise" | "ps" => {
+                    if store.list().is_empty() {
+                        println!("no background processes");
+                    } else {
+                        println!(
+                            "{}",
+                            crate::background::render_supervise(&store.supervise())
+                        );
+                    }
+                }
+                "tree" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs background tree <id>"))?;
+                    let record = store
+                        .get(id)
+                        .ok_or_else(|| anyhow::anyhow!("unknown background process id `{id}`"))?;
+                    let table = crate::background::process_table();
+                    println!("{}", crate::background::render_tree(record, &table));
+                }
                 "get" | "log" => {
                     let id = args
                         .get(1)
@@ -473,8 +493,17 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                     let r = store.stop(id, 5000)?;
                     println!("stopped {} (pid {})", r.id, r.pid);
                 }
+                "stop-tree" | "stop_tree" | "kill-tree" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs background stop-tree <id>"))?;
+                    let r = store.stop_tree(id, 5000)?;
+                    println!("stopped {} (pid {}) and descendants", r.id, r.pid);
+                }
                 other => {
-                    bail!("unknown background subcommand `{other}` (list | get <id> | stop <id>)")
+                    bail!(
+                        "unknown background subcommand `{other}` (list | supervise | tree <id> | get <id> | stop <id> | stop-tree <id>)"
+                    )
                 }
             }
             Ok(0)

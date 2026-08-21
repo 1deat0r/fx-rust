@@ -156,6 +156,22 @@ pub async fn run_interactive(
         config.permission_mode.to_string(),
     );
 
+    // Restore-on-resume: surface background daemons that are still alive so a
+    // resumed agent (and its human) immediately see the supervisor state.
+    if let Ok(bg) = crate::background::BackgroundStore::open() {
+        let running = bg
+            .list()
+            .iter()
+            .filter(|r| r.status == crate::background::BgStatus::Running)
+            .count();
+        if running > 0 {
+            eprintln!(
+                "\x1b[90m{}\x1b[0m background process(es) running — \x1b[36m/background supervise\x1b[0m",
+                running
+            );
+        }
+    }
+
     let mut interactive_human = human;
     let rl = rustyline::DefaultEditor::new().context("creating readline")?;
     let mut rl = rl;
@@ -388,27 +404,53 @@ pub async fn run_interactive(
                         Some(id_arg.as_str())
                     };
                     match (sub, id) {
-                        ("list" | "l", _) | ("get" | "stop", None) => match sub {
-                            "list" | "l" => {
-                                let records = store.list().to_vec();
-                                if records.is_empty() {
-                                    println!("no background processes");
-                                } else {
-                                    println!("{}", crate::background::render_table(&records));
+                        ("list" | "l", _) | ("get" | "stop" | "supervise" | "tree" | "stop-tree", None) => {
+                            match sub {
+                                "list" | "l" => {
+                                    let records = store.list().to_vec();
+                                    if records.is_empty() {
+                                        println!("no background processes");
+                                    } else {
+                                        println!("{}", crate::background::render_table(&records));
+                                    }
                                 }
+                                "supervise" => {
+                                    if store.list().is_empty() {
+                                        println!("no background processes");
+                                    } else {
+                                        println!(
+                                            "{}",
+                                            crate::background::render_supervise(&store.supervise())
+                                        );
+                                    }
+                                }
+                                _ => println!("usage: /background {sub} <id>"),
                             }
-                            _ => println!("usage: /background {sub} <id>"),
-                        },
+                        }
                         ("get", Some(id)) => match store.log_text(id, 16 * 1024, None) {
                             Ok(text) => println!("{text}"),
                             Err(e) => println!("{e:#}"),
+                        },
+                        ("tree", Some(id)) => match store.get(id) {
+                            Some(record) => {
+                                let table = crate::background::process_table();
+                                println!(
+                                    "{}",
+                                    crate::background::render_tree(record, &table)
+                                );
+                            }
+                            None => println!("unknown background process id `{id}`"),
                         },
                         ("stop", Some(id)) => match store.stop(id, 5000) {
                             Ok(r) => println!("stopped {} (pid {})", r.id, r.pid),
                             Err(e) => println!("{e:#}"),
                         },
+                        ("stop-tree" | "stop_tree", Some(id)) => match store.stop_tree(id, 5000) {
+                            Ok(r) => println!("stopped {} (pid {}) and descendants", r.id, r.pid),
+                            Err(e) => println!("{e:#}"),
+                        },
                         (other, _) => println!(
-                            "unknown background subcommand `{other}` (list | get <id> | stop <id>)"
+                            "unknown background subcommand `{other}` (list | supervise | tree <id> | get <id> | stop <id> | stop-tree <id>)"
                         ),
                     }
                 }
