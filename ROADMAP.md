@@ -27,7 +27,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Providers: gateway/OpenAI-compatible + Anthropic + SSE | 🟡 | `src/providers/`; missing model catalog/capabilities, context limits |
 | Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; auto mode now runs sandbox+classifier first, model reviewer on undetermined (P1) |
 | Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1); **codec v2 + migration, latest pointer, per-session usage, delete, JSON output landed (P1)** |
-| Hooks (4 lifecycle events + full input builders) | 🟡 | `src/hooks.rs`; upstream has full definitions/prompt/runtime/tool |
+| Hooks (4 lifecycle events) | ✅ | `src/hooks.rs` — full definitions contract: HookDefinition catalog (loop point + purpose), Limits, AttentionKind, Scope/Invocation, call_id/step_index in PreToolUse, enriched `fxrs hooks` |
 | MCP stdio JSON-RPC | 🟡 | `src/mcp.rs`; stdio only |
 | Toolkit | 🟡 | 21+ tools; see tool matrix |
 | CLI (interactive/ask/resume/sessions/session/status/permissions/setup/models/help/version/hooks/mcp/upgrade/doctor/usage/replay) | 🟡 | doctor/usage/replay landed (P1); auth/gh/review/capture/one-off/terminal/mcp_lookup pending |
@@ -57,7 +57,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Full subagent system | `core/subagent/*` (21 files) + `ui/subagent/*` | domain, execution, manager, authority, approvals, communication, tool host, ui projection |
 | Background execution | `core/background/*`, `core/execution/*`, `tools/shell/background_process.zig` | background store/launch/restore/supervisor, process tree, local + devbox executors, command environment |
 | Terminal integration | `core/terminal/*` (16 files), `tools/terminal/*`, `app_terminal*` | native/tmux/browser sessions, shell resolver, recovery, takeover |
-| Sessions full | `core/session/*` (40 files) | codec v2 + migration + latest pointer + usage sidecar-in-session landed (P1); replay tape (record_tape analog) + display metadata + `--search` landed (P1); prompt history, result store, artifacts pending |
+| Sessions full | `core/session/*` (40 files) | codec/migration/pointer/usage/delete/tape/metadata landed (P1); prompt history (upstream record shape + compaction) landed (P1); result store, artifacts pending |
 | Config catalog | `core/config/settings_catalog.zig`, `settings_store.zig`, `context_limits.zig`, `input_appearance.zig`, `presentation_mode.zig` | ✅ settings catalog + context limits landed (P1): `src/settings_catalog.rs`, `src/context.rs`, resolved in config + `fxrs settings`/`/settings` |
 | Permissions full | `core/permissions/*` (13 files) | sandbox + deterministic auto-classifier landed (P1); ApprovalRequest/ApprovalDecision + structured prompt + AttentionRequired on interactive approval landed (P1); command admission, direct command pending |
 | Slash commands | `core/slash_commands/*`, `builtins/commands.zig` | router + catalog landed (P1): help/exit/clear/version/status/model/permissions/sessions/session/resume/usage/doctor/setup/trace/feedback/workspace; compact/login/logout routed as not-ready |
@@ -101,7 +101,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 ## Phased plan
 
 - **Phase 0 — Mandate + scaffolding (this commit).** ROADMAP, parity matrix, README correction, memory.
-- **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders, ✅ session codec v2 + migration + latest pointer + per-session usage + delete, ✅ settings catalog + context limits (+ context guard in agent loop). Remaining: full session catalog/discovery (store-paths parity), full agent runtime (worker runtime, question prompt/answer), full hooks definitions.
+- **Phase 1 — Core backend parity.** ✅ shell-command lex/classification, ✅ sandbox + auto-classifier, ✅ usage.jsonl + `fxrs usage`, ✅ slash-command catalog, ✅ `doctor`/`replay` CLI, ✅ hooks input builders, ✅ session codec v2 + migration + latest pointer + per-session usage + delete, ✅ settings catalog + context limits (+ context guard in agent loop). ✅ Phase 1 core backend parity is complete (session store/codec/catalog, config catalog + context limits, shell parsing, sandbox + auto-classifier, approval flow, usage, prompt history, replay tape, slash commands, tool-ready web tooling, full hooks contract, doctor/usage/replay/history/settings CLI). Phase 2 (protocols & auth) is next: full MCP stack, OAuth/login, gateway model catalog.
 - **Phase 2 — Protocols & auth.** Full MCP (streamable HTTP, legacy SSE, elicitation, auth, negotiation, json-schema), auth/login (OAuth + keychain), gateway model catalog/capabilities, context limits, prompt history.
 - **Phase 3 — Execution & terminal.** Background store/supervisor, process tree, local + devbox executors, terminal integration (native/tmux/browser), terminal + background_process tools.
 - **Phase 4 — Subagent & modes.** Full subagent subsystem + UI, modes/mods registries.

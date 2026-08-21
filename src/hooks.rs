@@ -32,6 +32,103 @@ impl HookKind {
     }
 }
 
+/// Static per-event definition (mirrors upstream `HookDefinition`): agent
+/// loop point + purpose, shown by `fxrs hooks`.
+#[derive(Debug, Clone, Copy)]
+pub struct HookDefinition {
+    pub kind: HookKind,
+    pub lifecycle_event: &'static str,
+    pub agent_loop_point: &'static str,
+    pub purpose: &'static str,
+}
+
+impl HookKind {
+    pub fn definition(self) -> HookDefinition {
+        match self {
+            Self::PreToolUse => HookDefinition {
+                kind: self,
+                lifecycle_event: self.event_name(),
+                agent_loop_point: "before local tool validation, permissions, and execution",
+                purpose: "lets handlers keep a call unchanged, rewrite its arguments, or block it",
+            },
+            Self::Stop => HookDefinition {
+                kind: self,
+                lifecycle_event: self.event_name(),
+                agent_loop_point: "after a terminal assistant candidate before turn finalization",
+                purpose: "lets handlers allow completion or request one synthetic continuation",
+            },
+            Self::PostTurnEnd => HookDefinition {
+                kind: self,
+                lifecycle_event: self.event_name(),
+                agent_loop_point: "after a terminal turn outcome is accepted",
+                purpose: "lets handlers observe terminal turns and run side effects without changing the turn outcome",
+            },
+            Self::AttentionRequired => HookDefinition {
+                kind: self,
+                lifecycle_event: self.event_name(),
+                agent_loop_point: "after a user decision prompt becomes active",
+                purpose: "lets handlers observe when a foreground turn is waiting for user attention",
+            },
+        }
+    }
+}
+
+pub fn definitions() -> [HookDefinition; 4] {
+    [
+        HookKind::PreToolUse.definition(),
+        HookKind::Stop.definition(),
+        HookKind::PostTurnEnd.definition(),
+        HookKind::AttentionRequired.definition(),
+    ]
+}
+
+/// Payload size limits for hook scripts (upstream `Limits`).
+pub mod limits {
+    pub const HANDLER_NAME_BYTES: usize = 128;
+    pub const REASON_BYTES: usize = 4 * 1024;
+    pub const CONTEXT_BYTES: usize = 64 * 1024;
+    pub const ARGUMENTS_JSON_BYTES: usize = 1024 * 1024;
+}
+
+/// What kind of attention a foreground turn is waiting on (upstream
+/// `AttentionKind`). Only meaningful for AttentionRequired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttentionKind {
+    Permission,
+    Question,
+    RouteRecovery,
+}
+
+impl AttentionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Permission => "permission",
+            Self::Question => "question",
+            Self::RouteRecovery => "route_recovery",
+        }
+    }
+}
+
+/// Hook invocation scope: which surface kind triggered the hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeKind {
+    Interactive,
+    Ask,
+    Acp,
+    Subagent,
+}
+
+impl ScopeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Ask => "ask",
+            Self::Acp => "acp",
+            Self::Subagent => "subagent",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookOutcome {
     /// Proceed (or side-effect hook that did not object).
@@ -141,14 +238,31 @@ fn run_one(script: &Path, input: Value, timeout_secs: u64) -> Result<HookOutcome
 }
 
 /// Convenience for building the PreToolUse input object.
-pub fn pre_tool_use_input(tool_name: &str, args: &Value, workspace: &Path, session_id: Option<&str>) -> Value {
-    json!({
+pub fn pre_tool_use_input(
+    tool_name: &str,
+    call_id: &str,
+    step_index: usize,
+    args: &Value,
+    workspace: &Path,
+    session_id: Option<&str>,
+) -> Value {
+    let mut v = json!({
         "tool_name": tool_name,
+        "call_id": call_id,
+        "step_index": step_index,
         "tool_input": args,
         "workspace": workspace.display().to_string(),
         "session_id": session_id,
         "cwd": std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
-    })
+        "scope_kind": "interactive",
+    });
+    v = with_invocation(v, ScopeKind::Interactive, None);
+    if let Value::Object(map) = &mut v {
+        if let Value::Object(tool_input) = &mut map["tool_input"] {
+            let _ = tool_input;
+        }
+    }
+    v
 }
 
 fn base_input(workspace: &Path, session_id: Option<&str>) -> Value {
@@ -156,7 +270,22 @@ fn base_input(workspace: &Path, session_id: Option<&str>) -> Value {
         "workspace": workspace.display().to_string(),
         "session_id": session_id,
         "cwd": std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
+        "scope_kind": "interactive",
     })
+}
+
+fn with_invocation(mut v: Value, scope_kind: ScopeKind, turn_id: Option<u64>) -> Value {
+    if let Value::Object(map) = &mut v {
+        map.insert("invocation".into(), json!({
+            "scope": {
+                "kind": scope_kind.as_str(),
+                "workspace_root": map.get("workspace").cloned().unwrap_or(Value::Null),
+                "session_id": map.get("session_id").cloned().unwrap_or(Value::Null),
+            },
+            "turn_id": turn_id,
+        }));
+    }
+    v
 }
 
 /// Build the Stop event input (fx: assistant's final message for the turn).
@@ -180,14 +309,38 @@ pub fn attention_required_input(
     session_id: Option<&str>,
     reason: &str,
 ) -> Value {
+    attention_required_input_kind(workspace, session_id, reason, AttentionKind::Permission)
+}
+
+pub fn attention_required_input_kind(
+    workspace: &Path,
+    session_id: Option<&str>,
+    reason: &str,
+    kind: AttentionKind,
+) -> Value {
     let mut v = base_input(workspace, session_id);
     v["reason"] = Value::String(reason.to_string());
+    v["kind"] = Value::String(kind.as_str().into());
     v
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn definitions_cover_all_four_events() {
+        let defs = definitions();
+        assert_eq!(defs.len(), 4);
+        let names: Vec<_> = defs.iter().map(|d| d.lifecycle_event).collect();
+        assert_eq!(names, vec!["PreToolUse", "Stop", "PostTurnEnd", "AttentionRequired"]);
+        for d in &defs {
+            assert!(!d.agent_loop_point.is_empty());
+            assert!(!d.purpose.is_empty());
+        }
+        assert_eq!(AttentionKind::Permission.as_str(), "permission");
+        assert_eq!(ScopeKind::Ask.as_str(), "ask");
+    }
 
     #[test]
     fn discover_matches_event_names() {

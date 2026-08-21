@@ -3,6 +3,11 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+
+/// FX_HOME is a process-global env var; tests that reach API which reads it
+/// must be serialized or a parallel test can yank it mid-flight.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn fx_bin() -> PathBuf {
     // target/debug/fxrs relative to CARGO_MANIFEST_DIR
@@ -22,6 +27,7 @@ fn temp_home(tag: &str) -> PathBuf {
 
 #[test]
 fn cli_usage_roundtrip_with_fx_home() {
+    let _guard = ENV_LOCK.lock().unwrap();
     let home = temp_home("usage");
     let ws = temp_home("ws");
     let out = Command::new(fx_bin())
@@ -42,6 +48,7 @@ fn cli_usage_roundtrip_with_fx_home() {
 
 #[test]
 fn cli_doctor_reports_missing_endpoint() {
+    let _guard = ENV_LOCK.lock().unwrap();
     let home = temp_home("doctor");
     let ws = temp_home("ws2");
     // No API key env -> doctor must fail (exit != 0).
@@ -100,6 +107,7 @@ fn slash_router_and_shell_classifier_integration() {
 
 #[test]
 fn cli_settings_renders_catalog_with_fx_home() {
+    let _guard = ENV_LOCK.lock().unwrap();
     let home = temp_home("settings");
     let ws = temp_home("ws-settings");
     let out = Command::new(fx_bin())
@@ -122,6 +130,7 @@ fn cli_settings_renders_catalog_with_fx_home() {
 
 #[test]
 fn cli_session_json_lifecycle() {
+    let _guard = ENV_LOCK.lock().unwrap();
     let home = temp_home("session-json");
     let ws = temp_home("ws-session-json");
     // Isolate the parent-process store too, so saves land in FX_HOME.
@@ -198,6 +207,7 @@ fn cli_session_json_lifecycle() {
 
 #[test]
 fn cli_replay_tape_and_sessions_search() {
+    let _guard = ENV_LOCK.lock().unwrap();
     let home = temp_home("tape");
     let ws = temp_home("ws-tape");
     std::env::set_var("FX_HOME", &home);

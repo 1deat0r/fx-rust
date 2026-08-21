@@ -16,6 +16,7 @@ pub mod cli;
 pub mod context;
 pub mod config;
 pub mod exec_memory;
+pub mod history;
 pub mod hooks;
 pub mod mcp;
 pub mod permissions;

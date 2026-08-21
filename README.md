@@ -92,6 +92,7 @@ fxrs settings         # settings catalog + effective values
 fxrs doctor           # environment + config diagnostics
 fxrs replay <id>      # replay a session transcript
 fxrs replay tape <id> # replay the JSONL tool-call tape of a session
+fxrs history [--search t] [--limit n] [--json]  # prompt history from ~/.fx/history.jsonl
 fxrs session <id|last> [--json|--delete]  # session details / JSON / delete
 fxrs permissions      # show current permission rules
 fxrs models           # show the resolved model/provider

@@ -225,16 +225,19 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
         }
         Some("hooks") => {
             let cfg = config::resolve(&cwd())?;
-            use crate::hooks::{HookKind, discover};
-            for kind in [HookKind::PreToolUse, HookKind::Stop, HookKind::PostTurnEnd, HookKind::AttentionRequired] {
-                let found = discover(kind, &cfg.workspace);
-                println!("{}:", kind.event_name());
+            use crate::hooks::discover;
+            for def in crate::hooks::definitions().iter() {
+                println!("\x1b[1m{}\x1b[0m — {}", def.lifecycle_event, def.agent_loop_point);
+                println!("  purpose: {}", def.purpose);
+                let found = discover(def.kind, &cfg.workspace);
                 if found.is_empty() {
-                    println!("  (none)");
+                    println!("  scripts: (none)");
+                } else {
+                    for f in found {
+                        println!("  script: {}", f.display());
+                    }
                 }
-                for f in found {
-                    println!("  {}", f.display());
-                }
+                println!();
             }
             Ok(0)
         }
@@ -361,6 +364,35 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             }
             Ok(0)
         }
+        Some("history") => {
+            let store = crate::history::HistoryStore::new();
+            let wants_json = args.clone().any(|a| a == "--json");
+            let search = args
+                .clone()
+                .find(|a| a.as_str() == "--search")
+                .and_then(|_| args.clone().skip_while(|a| a.as_str() != "--search").nth(1))
+                .cloned();
+            let mut limit = 20usize;
+            if let Some(l) = args
+                .clone()
+                .find(|a| a.as_str() == "--limit")
+                .and_then(|_| args.clone().skip_while(|a| a.as_str() != "--limit").nth(1))
+            {
+                limit = l.parse().unwrap_or(20);
+            }
+            let recs = store.query(search.as_deref(), limit);
+            if wants_json {
+                println!("{}", serde_json::to_string_pretty(&recs)?);
+                return Ok(0);
+            }
+            if recs.is_empty() {
+                println!("no history");
+            }
+            for r in &recs {
+                println!("{} {}: {}", r.timestamp_ms, workspace_basename(&r.workspace_root), shade_line(&r.text));
+            }
+            Ok(0)
+        }
         Some("settings") => {
             let cfg = config::resolve(&cwd())?;
             print!("{}", crate::settings_catalog::render(&cfg));
@@ -381,6 +413,10 @@ println!("example: npx -y @modelcontextprotocol/server-fetch");
             bail!("unknown command")
         }
     }
+}
+
+fn workspace_basename(ws: &str) -> String {
+    crate::sessions::workspace_name(ws)
 }
 
 fn cwd() -> PathBuf {

@@ -101,6 +101,12 @@ pub async fn run(
         system.push_str(&format!("\n## User's current request\n{t}\n"));
     }
 
+    // Prompt history: append user prompts to ~/.fx/history.jsonl.
+    if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+        let _ = crate::history::HistoryStore::new()
+            .record(&config.workspace.display().to_string(), p);
+    }
+
     // Seed the transcript with the user's first message.
     if transcript.is_empty() {
         if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
@@ -354,7 +360,14 @@ pub async fn run(
             let mut hook_blocked: Option<String> = None;
             for outcome in crate::hooks::run(
                 crate::hooks::HookKind::PreToolUse,
-                crate::hooks::pre_tool_use_input(&call.name, &hook_args, &config.workspace, Some(&session_id)),
+                crate::hooks::pre_tool_use_input(
+                    &call.name,
+                    &call.id,
+                    steps,
+                    &hook_args,
+                    &config.workspace,
+                    Some(&session_id),
+                ),
                 &config.workspace,
                 30,
             ) {

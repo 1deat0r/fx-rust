@@ -175,6 +175,19 @@ pub async fn run_interactive(
         if let Some(cmd) = crate::slash_commands::parse(trimmed) {
             use crate::slash_commands::Slash;
             match cmd {
+                Slash::History(limit) => {
+                    let n = limit.and_then(|s| s.parse::<usize>().ok()).unwrap_or(20).min(200);
+                    let recs = crate::history::HistoryStore::new().query(None, n);
+                    if recs.is_empty() {
+                        println!("no history");
+                    }
+                    for r in &recs {
+                        println!("{} {}", r.timestamp_ms, crate::sessions::workspace_name(&r.workspace_root));
+                        println!("    {}", r.text.chars().take(240).collect::<String>());
+                    }
+                    println!("({} prompts)", recs.len());
+                    continue;
+                }
                 Slash::Settings => {
                     print!("{}", crate::settings_catalog::render(&config));
                     continue;
