@@ -369,6 +369,49 @@ pub async fn run_interactive(
                     }
                     continue;
                 }
+                Slash::Background(arg) => {
+                    let mut store = match crate::background::BackgroundStore::open() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("background store error: {e:#}");
+                            continue;
+                        }
+                    };
+                    let (sub, id_arg) =
+                        match arg.as_deref().unwrap_or("").split_once(char::is_whitespace) {
+                            Some((s, rest)) => (s, rest.trim().to_string()),
+                            None => (arg.as_deref().unwrap_or("list"), String::new()),
+                        };
+                    let id: Option<&str> = if id_arg.is_empty() {
+                        None
+                    } else {
+                        Some(id_arg.as_str())
+                    };
+                    match (sub, id) {
+                        ("list" | "l", _) | ("get" | "stop", None) => match sub {
+                            "list" | "l" => {
+                                let records = store.list().to_vec();
+                                if records.is_empty() {
+                                    println!("no background processes");
+                                } else {
+                                    println!("{}", crate::background::render_table(&records));
+                                }
+                            }
+                            _ => println!("usage: /background {sub} <id>"),
+                        },
+                        ("get", Some(id)) => match store.log_text(id, 16 * 1024, None) {
+                            Ok(text) => println!("{text}"),
+                            Err(e) => println!("{e:#}"),
+                        },
+                        ("stop", Some(id)) => match store.stop(id, 5000) {
+                            Ok(r) => println!("stopped {} (pid {})", r.id, r.pid),
+                            Err(e) => println!("{e:#}"),
+                        },
+                        (other, _) => println!(
+                            "unknown background subcommand `{other}` (list | get <id> | stop <id>)"
+                        ),
+                    }
+                }
                 Slash::Compact => println!("(not ready: context compaction is a later phase)"),
                 Slash::Login => println!("(not ready: OAuth login is a later phase)"),
                 Slash::Logout => println!("(not ready: OAuth logout is a later phase)"),

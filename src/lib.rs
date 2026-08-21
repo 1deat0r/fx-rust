@@ -13,6 +13,7 @@
 pub mod agent;
 pub mod approval;
 pub mod auth;
+pub mod background;
 pub mod cli;
 pub mod config;
 pub mod context;

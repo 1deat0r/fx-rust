@@ -9,6 +9,7 @@
 //! Non-sensitive: read_file, list_files, glob_files, grep_files, file_info,
 //! web_search, web_fetch, memory, skill, ask_user_question.
 
+pub mod background;
 pub mod bash;
 pub mod filesystem;
 pub mod html;
@@ -74,6 +75,13 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
     let args: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
     match name {
+        "background_process" => {
+            if args.get("action").and_then(|v| v.as_str()) == Some("start") {
+                s("command")
+            } else {
+                s("process_id")
+            }
+        }
         "run_command" => s("command"),
         "read_file" | "write_file" | "edit_file" | "delete_file" | "rename_file" | "copy_file"
         | "create_folder" | "open_file" | "file_info" => s("file_path")
@@ -91,6 +99,7 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
 /// Errors are surfaced as a structured error object (not an abort).
 pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> {
     match name {
+        "background_process" => background::background_process(ctx, args).await,
         "run_command" => bash::run_command(ctx, args).await,
         "read_file" => filesystem::read_file(ctx, args),
         "write_file" => filesystem::write_file(ctx, args),
@@ -227,6 +236,27 @@ pub fn schemas() -> Vec<Value> {
                         "timeout_ms": {"type": "integer", "description": "Timeout in milliseconds (default 60000)."}
                     },
                     "required": ["command"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "background_process",
+                "description": "Start and manage long-running background processes: servers, watchers, builds. Commands run detached in their own session with output written to a log file, so they keep running after the tool returns. Actions: start (launch), list, get_output/log (tail the log), stop (terminate with a grace period). Sensitive.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["start", "list", "get_output", "log", "stop"], "description": "What to do (default list)."},
+                        "command": {"type": "string", "description": "The shell command to run. Required for start."},
+                        "name": {"type": "string", "description": "Optional short label for the process."},
+                        "cwd": {"type": "string", "description": "Working directory (relative to workspace). Defaults to the workspace."},
+                        "process_id": {"type": "string", "description": "Background process id. Required for get_output/log/stop."},
+                        "tail": {"type": "integer", "description": "For get_output: number of trailing lines to return."},
+                        "max_bytes": {"type": "integer", "description": "For get_output: max bytes to return (default 16384)."},
+                        "timeout_ms": {"type": "integer", "description": "For stop: grace period before SIGKILL (default 5000)."}
+                    },
+                    "required": ["action"]
                 }
             }
         }),

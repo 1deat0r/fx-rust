@@ -440,6 +440,45 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                 }
             }
         }
+        Some("background") | Some("bg") => {
+            let args: Vec<String> = args.cloned().collect();
+            let sub = args.first().map(|s| s.as_str()).unwrap_or("list");
+            let mut store = crate::background::BackgroundStore::open()?;
+            match sub {
+                "list" | "ls" => {
+                    let records = store.list().to_vec();
+                    if records.is_empty() {
+                        println!("no background processes");
+                        println!(
+                            "start one with the background_process tool inside an agent session"
+                        );
+                    } else {
+                        println!("{}", crate::background::render_table(&records));
+                    }
+                }
+                "get" | "log" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs background get <id>"))?;
+                    let text = store.log_text(id, 64 * 1024, None)?;
+                    print!("{text}");
+                    if !text.ends_with('\n') {
+                        println!();
+                    }
+                }
+                "stop" => {
+                    let id = args
+                        .get(1)
+                        .ok_or_else(|| anyhow::anyhow!("fxrs background stop <id>"))?;
+                    let r = store.stop(id, 5000)?;
+                    println!("stopped {} (pid {})", r.id, r.pid);
+                }
+                other => {
+                    bail!("unknown background subcommand `{other}` (list | get <id> | stop <id>)")
+                }
+            }
+            Ok(0)
+        }
         Some("setup") => {
             println!("fxrs needs a model endpoint. Configure one of:");
             println!("  AI_GATEWAY_API_KEY=...            (Vercel AI Gateway, default)");

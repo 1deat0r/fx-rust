@@ -23,6 +23,7 @@ pub enum Slash {
     Setup,
     Compact,
     Workspace,
+    Background(Option<String>),
     Login,
     Logout,
     /// Unknown / unimplemented slash command (kept so the shell can explain).
@@ -177,6 +178,13 @@ pub fn catalog() -> &'static [Spec] {
             ready: true,
         },
         Spec {
+            name: "background",
+            aliases: &["bg"],
+            usage: "/background [get <id> | stop <id>]",
+            description: "list, inspect, or stop background processes",
+            ready: true,
+        },
+        Spec {
             name: "login",
             aliases: &[],
             usage: "/login",
@@ -230,6 +238,7 @@ pub fn parse(line: &str) -> Option<Slash> {
         "feedback" => Slash::Feedback,
         "compact" => Slash::Compact,
         "workspace" => Slash::Workspace,
+        "background" | "bg" => Slash::Background(arg.clone()),
         "login" => Slash::Login,
         "logout" => Slash::Logout,
         other => Slash::Unknown(other.to_string()),

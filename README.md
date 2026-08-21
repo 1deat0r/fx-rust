@@ -21,6 +21,13 @@ code with a single keystroke or fully hands-free.
   `~/.fx/hooks/<Event>` and `<workspace>/.fx/hooks/<Event>` speaking
   Claude-Code-style stdin-JSON / stdout `{"decision": ...}`; hook failures
   never abort the agent. Inspect with `fxrs hooks`.
+- **Background processes**: the `background_process` tool starts long-running
+  commands detached (own session via setsid/double-fork, log file under
+  `~/.fx/background/`), then supports `list` / `get_output` (tail) / `log` /
+  `stop` (SIGTERM → SIGKILL grace). A `__FX_EXIT_CODE__` marker records the
+  real exit code, and the store reconciles liveness on load so resumed
+  sessions see accurate status. Inspect from the shell with `fxrs background`
+  or `/background`.
 - **MCP clients (stdio + remote)**: `mcpServers` array in `~/.fx/settings.json`,
   workspace settings, or repo `.fx.json`. Three transports: `stdio` (default,
   `command`/`args`/`env`), `http` / `streamable-http` (modern streamable HTTP),
