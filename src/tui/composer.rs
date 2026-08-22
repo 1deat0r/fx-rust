@@ -128,10 +128,7 @@ impl Composer {
             Key::Left => {
                 let _ = self.state.clear_selection();
                 let at = self.state.cursor;
-                self.state.cursor = ic::previous_character_start(
-                    self.state.input.as_bytes(),
-                    at,
-                );
+                self.state.cursor = ic::previous_character_start(self.state.input.as_bytes(), at);
                 ComposerAction::None
             }
             Key::Right => {
@@ -152,35 +149,32 @@ impl Composer {
             }
             Key::Ctrl('b') => {
                 let _ = self.state.clear_selection();
-                self.state.cursor = ic::previous_character_start(
-                    self.state.input.as_bytes(),
-                    self.state.cursor,
-                );
+                self.state.cursor =
+                    ic::previous_character_start(self.state.input.as_bytes(), self.state.cursor);
                 ComposerAction::None
             }
             Key::Ctrl('f') => {
                 let _ = self.state.clear_selection();
-                self.state.cursor = ic::next_character_end(
-                    self.state.input.as_bytes(),
-                    self.state.cursor,
-                );
+                self.state.cursor =
+                    ic::next_character_end(self.state.input.as_bytes(), self.state.cursor);
                 ComposerAction::None
             }
             Key::Alt('b') => {
                 let _ = self.state.clear_selection();
-                self.state.cursor = ic::previous_word_start(self.state.input.as_bytes(), self.state.cursor);
+                self.state.cursor =
+                    ic::previous_word_start(self.state.input.as_bytes(), self.state.cursor);
                 ComposerAction::None
             }
             Key::Alt('f') => {
                 let _ = self.state.clear_selection();
-                self.state.cursor = ic::next_word_end(self.state.input.as_bytes(), self.state.cursor);
+                self.state.cursor =
+                    ic::next_word_end(self.state.input.as_bytes(), self.state.cursor);
                 ComposerAction::None
             }
             Key::Ctrl('u') => {
                 // Kill to line start.
                 if self.state.cursor > 0 {
-                    let removed: String =
-                        self.state.input[..self.state.cursor].to_string();
+                    let removed: String = self.state.input[..self.state.cursor].to_string();
                     let rest: String = self.state.input[self.state.cursor..].to_string();
                     self.state.input = rest;
                     self.state.cursor = 0;
@@ -192,8 +186,7 @@ impl Composer {
             Key::Ctrl('k') => {
                 // Kill to line end.
                 if self.state.cursor < self.state.input.len() {
-                    let removed: String =
-                        self.state.input[self.state.cursor..].to_string();
+                    let removed: String = self.state.input[self.state.cursor..].to_string();
                     self.state.input.truncate(self.state.cursor);
                     self.kill(removed.as_str());
                 }
@@ -201,8 +194,7 @@ impl Composer {
             }
             Key::Ctrl('w') => {
                 // Kill previous word.
-                let start =
-                    ic::previous_word_start(self.state.input.as_bytes(), self.state.cursor);
+                let start = ic::previous_word_start(self.state.input.as_bytes(), self.state.cursor);
                 if start < self.state.cursor {
                     let removed: String = self.state.input[start..self.state.cursor].to_string();
                     self.state.input.replace_range(start..self.state.cursor, "");
@@ -339,13 +331,7 @@ impl Composer {
     /// Render the composer row (single line). Returns the screen column of
     /// the cursor (for `place_cursor` after flush).
     #[allow(unused_assignments, unused_mut)]
-    pub fn render(
-        &self,
-        screen: &mut Screen,
-        theme: &Theme,
-        row: u16,
-        multiline: bool,
-    ) -> u16 {
+    pub fn render(&self, screen: &mut Screen, theme: &Theme, row: u16, multiline: bool) -> u16 {
         let prompt = &self.prompt_prefix;
         let prompt_w = display_width(prompt);
         let mut col;
@@ -387,7 +373,10 @@ impl Composer {
             let visible = text.chars().take(width).collect::<String>();
             screen.putstr_styled(row, text_col, &visible, CellStyle::plain(theme.assistant));
             // Cursor col = prompt_w + display width before cursor (clipped).
-            let before = text.chars().take(self.state.cursor.min(text.len())).collect::<String>();
+            let before = text
+                .chars()
+                .take(self.state.cursor.min(text.len()))
+                .collect::<String>();
             let w = display_width(&before);
             text_col + (w.min(width) as u16)
         }

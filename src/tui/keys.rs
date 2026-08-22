@@ -82,7 +82,10 @@ mod tests {
 
     #[test]
     fn plain_char() {
-        assert_eq!(from_crossterm(KeyEvent::from(KeyCode::Char('x'))), Key::Char('x'));
+        assert_eq!(
+            from_crossterm(KeyEvent::from(KeyCode::Char('x'))),
+            Key::Char('x')
+        );
     }
 
     #[test]

@@ -280,12 +280,22 @@ impl Transcript {
                 if remaining == 0 {
                     break;
                 }
-                let style = style_for(line.kind, theme, li == self.active.unwrap_or(usize::MAX), active_color);
+                let style = style_for(
+                    line.kind,
+                    theme,
+                    li == self.active.unwrap_or(usize::MAX),
+                    active_color,
+                );
                 screen.putstr_styled(row, 0, wl, style);
                 // Clear the rest of the row (in case a previous longer line
                 // left residue after the diff — flush diff handles it, but
                 // explicit blanking keeps the buffer honest).
-                screen.hline(row, wl.chars().count() as u16, screen.cols - (wl.chars().count() as u16).min(screen.cols), Cell::styled(' ', theme.bg));
+                screen.hline(
+                    row,
+                    wl.chars().count() as u16,
+                    screen.cols - (wl.chars().count() as u16).min(screen.cols),
+                    Cell::styled(' ', theme.bg),
+                );
                 row += 1;
                 remaining -= 1;
             }
@@ -301,7 +311,12 @@ impl Transcript {
     }
 
     /// Find a rendered row index for a logical line (for cursor placement).
-    pub fn line_screen_row(&mut self, logical: usize, area_top: u16, view_rows: u16) -> Option<u16> {
+    pub fn line_screen_row(
+        &mut self,
+        logical: usize,
+        area_top: u16,
+        view_rows: u16,
+    ) -> Option<u16> {
         let top_line = self.clamp_scroll(view_rows as usize);
         if logical < top_line {
             return None;

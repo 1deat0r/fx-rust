@@ -1,19 +1,13 @@
 //! Reusable TUI widgets: footer, single-line status bar, and the help
 //! overlay screen.
 
-
 use super::screen::{Cell, CellStyle, Screen};
 use super::theme::Theme;
 
 /// Render the footer bar: workspace, model, permission mode, counts, and the
 /// standard key hints on the right side.
 #[allow(unused_assignments)]
-pub fn footer(
-    screen: &mut Screen,
-    theme: &Theme,
-    row: u16,
-    info: &FooterInfo,
-) {
+pub fn footer(screen: &mut Screen, theme: &Theme, row: u16, info: &FooterInfo) {
     let bg = theme.footer_bg;
     screen.hline(
         row,
@@ -121,7 +115,6 @@ pub fn footer(
         );
     }
 }
-
 
 #[derive(Debug, Default)]
 pub struct FooterInfo {

@@ -10,16 +10,18 @@
 //! The agent streams events through a channel; the loop drains the channel
 //! every frame, so rendering stays responsive while the model streams.
 
-use std::sync::Arc;
-use std::sync::mpsc;
 use std::io::Write as _;
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 
 use crate::agent::AgentRequest;
 use crate::approval::ApprovalRequest;
@@ -29,6 +31,7 @@ use crate::sessions::SessionStore;
 use super::composer::{Composer, ComposerAction};
 use super::keys::{self, Key};
 use super::screen::{CellStyle, Screen};
+use super::screens::{self, Picker, PickerItem};
 use super::theme::{self, Theme};
 use super::transcript::{LineKind, Transcript};
 use super::widgets::{self, FooterInfo};
@@ -36,6 +39,8 @@ use super::widgets::{self, FooterInfo};
 /// Events the agent pushes into the UI.
 pub enum Ev {
     Step(usize),
+    /// Gateway model catalog arrived from a background fetch.
+    ModelsCatalog(Result<Vec<crate::gateway::ModelCatalogEntry>, String>),
     Text(String),
     ReasoningStart,
     ReasoningDelta(String),
@@ -88,7 +93,6 @@ impl crate::ui::Human for TuiHuman {
         answer_rx
             .recv_timeout(Duration::from_secs(600))
             .unwrap_or_default()
-        
     }
 }
 
@@ -98,7 +102,12 @@ impl crate::ui::Human for TuiHuman {
 enum Mode {
     Normal,
     Help,
-    Confirm,
+    Approval,
+    FullTranscript,
+    Settings,
+    Resume,
+    Models,
+    Skills,
 }
 
 pub struct App {
@@ -116,15 +125,32 @@ pub struct App {
     unread: usize,
     exit_requested: bool,
     trace: bool,
+    // ---- Phase 5 dedicated screens ----
+    bg_tx: mpsc::Sender<Ev>,
+    bg_rx: mpsc::Receiver<Ev>,
+    pick_resume: Picker,
+    pick_models: Picker,
+    models_loading: bool,
+    pick_skills: Picker,
+    settings_lines: Vec<String>,
+    settings_scroll: usize,
+    help_scroll: usize,
+    spin_frame: usize,
 }
 
 impl App {
-    pub fn new(config: Arc<Config>, store: SessionStore, resume: Option<String>, trace: bool) -> Result<Self> {
+    pub fn new(
+        config: Arc<Config>,
+        store: SessionStore,
+        resume: Option<String>,
+        trace: bool,
+    ) -> Result<Self> {
         let (cols, rows) = super::screen::terminal_size();
         let theme = theme::resolve(None);
         let transcript = Transcript::new(cols as usize);
         let mut composer = Composer::new();
         composer.set_prompt_prefix("ƒ> ");
+        let (bg_tx, bg_rx) = mpsc::channel::<Ev>();
         let mut app = App {
             config,
             store,
@@ -140,6 +166,22 @@ impl App {
             unread: 0,
             exit_requested: false,
             trace,
+            bg_tx,
+            bg_rx,
+            pick_resume: Picker::new(
+                "fxrs — resume session",
+                "↑↓ navigate · enter resume · q/esc back",
+            ),
+            pick_models: Picker::new(
+                "fxrs — model catalog",
+                "↑↓ navigate · enter select · q/esc back",
+            ),
+            models_loading: false,
+            pick_skills: Picker::new("fxrs — skills", "↑↓ navigate · enter view · q/esc back"),
+            settings_lines: Vec::new(),
+            settings_scroll: 0,
+            help_scroll: 0,
+            spin_frame: 0,
         };
         app.init_banner(resume)?;
         Ok(app)
@@ -195,11 +237,17 @@ impl App {
         if let Some(id) = resume {
             match id.as_str() {
                 "" | "last" => {
-                    if let Some(sess) = self
-                        .store
-                        .list(Some(&self.config.workspace))
-                        .ok()
-                        .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+                    if let Some(sess) =
+                        self.store
+                            .list(Some(&self.config.workspace))
+                            .ok()
+                            .and_then(|mut v| {
+                                if v.is_empty() {
+                                    None
+                                } else {
+                                    Some(v.remove(0))
+                                }
+                            })
                     {
                         self.resume_session(&sess.id)?;
                     }
@@ -239,7 +287,8 @@ impl App {
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.chars().take(120).collect::<String>())
                                     .unwrap_or_default();
-                                self.transcript.push(LineKind::Tool, format!("⎿ {} {cmd}", name));
+                                self.transcript
+                                    .push(LineKind::Tool, format!("⎿ {} {cmd}", name));
                             }
                             _ => {}
                         }
@@ -320,16 +369,152 @@ impl App {
     fn handle_key(&mut self, key: Key) {
         match self.mode {
             Mode::Help => {
-                if let Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Enter = key {
-                    self.mode = Mode::Normal;
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Enter => {
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.help_scroll = self.help_scroll.saturating_sub(1),
+                    Key::Down => self.help_scroll = self.help_scroll.saturating_add(1),
+                    Key::PageUp => self.help_scroll = self.help_scroll.saturating_sub(10),
+                    Key::PageDown => self.help_scroll = self.help_scroll.saturating_add(10),
+                    _ => {}
                 }
                 return;
             }
-            Mode::Confirm => {
+            Mode::Approval => {
                 match key {
                     Key::Char('y') | Key::Char('Y') | Key::Enter => self.answer_approval(true),
                     Key::Char('a') | Key::Char('A') => self.answer_approval(true),
                     Key::Char('n') | Key::Char('N') | Key::Escape => self.answer_approval(false),
+                    _ => {}
+                }
+                return;
+            }
+            Mode::FullTranscript => {
+                let rows = self.transcript_view_rows();
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Ctrl('t') => {
+                        self.transcript.follow = true;
+                        self.transcript.to_bottom(rows as usize);
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.transcript.scroll_by(-1, rows as usize),
+                    Key::Down => self.transcript.scroll_by(1, rows as usize),
+                    Key::PageUp => self.transcript.page_up(rows as usize),
+                    Key::PageDown => self.transcript.page_down(rows as usize),
+                    Key::Home => {
+                        self.transcript.follow = false;
+                        self.transcript.scroll_line = 0;
+                    }
+                    Key::End => {
+                        self.transcript.follow = true;
+                        self.transcript.to_bottom(rows as usize);
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Mode::Settings => {
+                let view = self.screen.rows.saturating_sub(2) as usize;
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Ctrl('s') => {
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.settings_scroll = self.settings_scroll.saturating_sub(1),
+                    Key::Down => self.settings_scroll = self.settings_scroll.saturating_add(1),
+                    Key::PageUp => self.settings_scroll = self.settings_scroll.saturating_sub(view),
+                    Key::PageDown => {
+                        self.settings_scroll = self.settings_scroll.saturating_add(view)
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Mode::Resume => {
+                let view = self.screen.rows.saturating_sub(2) as usize;
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Ctrl('r') => {
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.pick_resume.move_up(),
+                    Key::Down => self.pick_resume.move_down(),
+                    Key::PageUp => self.pick_resume.page_up(view),
+                    Key::PageDown => self.pick_resume.page_down(view),
+                    Key::Enter => {
+                        if let Some(id) = self.pick_resume.selected_value().map(|s| s.to_string()) {
+                            let req = AgentRequest {
+                                prompt: None,
+                                system: None,
+                                interactive: true,
+                                resume: Some(id.clone()),
+                                messages: Vec::new(),
+                                images: Vec::new(),
+                            };
+                            self.mode = Mode::Normal;
+                            if let Err(e) = self.resume_session(&id) {
+                                self.transcript.push(LineKind::Error, format!("{e:#}"));
+                            } else {
+                                self.spawn_agent(req);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Mode::Models => {
+                let view = self.screen.rows.saturating_sub(2) as usize;
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Ctrl('m') => {
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.pick_models.move_up(),
+                    Key::Down => self.pick_models.move_down(),
+                    Key::PageUp => self.pick_models.page_up(view),
+                    Key::PageDown => self.pick_models.page_down(view),
+                    Key::Enter => {
+                        if let Some(id) = self.pick_models.selected_value().map(|s| s.to_string()) {
+                            let was = self.config.model.clone();
+                            let cfg = Arc::make_mut(&mut self.config);
+                            cfg.model = id.clone();
+                            self.transcript.push(
+                                LineKind::System,
+                                format!("model: {was} → {id} (in-memory; set FX_MODEL to persist)"),
+                            );
+                            self.mode = Mode::Normal;
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            Mode::Skills => {
+                let view = self.screen.rows.saturating_sub(2) as usize;
+                match key {
+                    Key::Escape | Key::Char('q') | Key::Char('Q') | Key::Ctrl('k') => {
+                        self.mode = Mode::Normal;
+                    }
+                    Key::Up => self.pick_skills.move_up(),
+                    Key::Down => self.pick_skills.move_down(),
+                    Key::PageUp => self.pick_skills.page_up(view),
+                    Key::PageDown => self.pick_skills.page_down(view),
+                    Key::Enter => {
+                        if let Some(path) = self.pick_skills.selected_value() {
+                            if let Ok(body) =
+                                crate::skills::read_skill_md(std::path::Path::new(path), 4 * 1024)
+                            {
+                                self.transcript.push(
+                                    LineKind::System,
+                                    format!("skill {} — first 4 KiB:", path),
+                                );
+                                self.push_multi(&body);
+                            } else {
+                                self.transcript
+                                    .push(LineKind::Error, format!("skill unreadable: {path}"));
+                            }
+                            self.mode = Mode::Normal;
+                        }
+                    }
                     _ => {}
                 }
                 return;
@@ -346,7 +531,29 @@ impl App {
                     self.interrupt();
                 } else {
                     self.mode = Mode::Help;
+                    self.help_scroll = 0;
                 }
+            }
+            Key::Ctrl('t') => {
+                let rows = self.transcript_view_rows();
+                self.transcript.follow = false;
+                self.transcript.scroll_line = 0;
+                let _ = rows;
+                self.mode = Mode::FullTranscript;
+            }
+            Key::Ctrl('s') => {
+                self.settings_lines = screens::settings_lines(&self.config);
+                self.settings_scroll = 0;
+                self.mode = Mode::Settings;
+            }
+            Key::Ctrl('r') => {
+                self.open_resume_picker();
+            }
+            Key::Ctrl('m') => {
+                self.open_models_picker();
+            }
+            Key::Ctrl('k') => {
+                self.open_skills_picker();
             }
             Key::Ctrl('l') => {
                 // repaint: next frame redraws everything.
@@ -415,7 +622,8 @@ impl App {
     fn handle_slash(&mut self, line: &str) {
         use crate::slash_commands::{parse, Slash};
         let Some(cmd) = parse(line) else {
-            self.transcript.push(LineKind::System, format!("unknown slash command: {line}"));
+            self.transcript
+                .push(LineKind::System, format!("unknown slash command: {line}"));
             return;
         };
         match cmd {
@@ -444,11 +652,16 @@ impl App {
                 }
             }
             Slash::Exit => self.exit_requested = true,
-            Slash::Help => self.mode = Mode::Help,
+            Slash::Help => {
+                self.mode = Mode::Help;
+                self.help_scroll = 0;
+            }
             Slash::Clear => self.transcript.clear(),
             Slash::Version => {
-                self.transcript
-                    .push(LineKind::System, format!("fxrs {}", crate::version::VERSION));
+                self.transcript.push(
+                    LineKind::System,
+                    format!("fxrs {}", crate::version::VERSION),
+                );
             }
             Slash::Status => {
                 self.transcript.push(
@@ -463,7 +676,7 @@ impl App {
                 );
             }
             Slash::Model => {
-                self.transcript.push(LineKind::System, format!("model: {}", self.model_label()));
+                self.open_models_picker();
             }
             Slash::Permissions => {
                 self.transcript.push(
@@ -484,13 +697,15 @@ impl App {
                 }
             }
             Slash::Settings => {
-                let rendered = crate::settings_catalog::render(&self.config);
-                self.push_multi(&rendered);
+                self.settings_lines = screens::settings_lines(&self.config);
+                self.settings_scroll = 0;
+                self.mode = Mode::Settings;
             }
             Slash::Doctor => {
                 let issues = crate::cli::doctor_checks(&self.config);
                 if issues.is_empty() {
-                    self.transcript.push(LineKind::System, "all checks passed ✓".to_string());
+                    self.transcript
+                        .push(LineKind::System, "all checks passed ✓".to_string());
                 } else {
                     for (sev, msg) in issues {
                         self.transcript.push(
@@ -500,28 +715,27 @@ impl App {
                     }
                 }
             }
-            Slash::Sessions => {
-                match self.store.list(Some(&self.config.workspace)) {
-                    Ok(list) if list.is_empty() => {
-                        self.transcript.push(LineKind::System, "no sessions".to_string());
-                    }
-                    Ok(list) => {
-                        for s in list.iter().take(20) {
-                            self.transcript.push(
-                                LineKind::Tool,
-                                format!(
-                                    "{} {} msgs · {}k tok · {}",
-                                    s.id,
-                                    s.messages,
-                                    s.tokens / 1000,
-                                    s.last_text.chars().take(80).collect::<String>(),
-                                ),
-                            );
-                        }
-                    }
-                    Err(e) => self.transcript.push(LineKind::Error, format!("{e:#}")),
+            Slash::Sessions => match self.store.list(Some(&self.config.workspace)) {
+                Ok(list) if list.is_empty() => {
+                    self.transcript
+                        .push(LineKind::System, "no sessions".to_string());
                 }
-            }
+                Ok(list) => {
+                    for s in list.iter().take(20) {
+                        self.transcript.push(
+                            LineKind::Tool,
+                            format!(
+                                "{} {} msgs · {}k tok · {}",
+                                s.id,
+                                s.messages,
+                                s.tokens / 1000,
+                                s.last_text.chars().take(80).collect::<String>(),
+                            ),
+                        );
+                    }
+                }
+                Err(e) => self.transcript.push(LineKind::Error, format!("{e:#}")),
+            },
             Slash::Session(id) => {
                 let target = self.resolve_session_arg(id.as_deref());
                 match target {
@@ -530,10 +744,16 @@ impl App {
                             self.transcript.push(LineKind::Error, format!("{e:#}"));
                         }
                     }
-                    None => self.transcript.push(LineKind::System, "no sessions".to_string()),
+                    None => self
+                        .transcript
+                        .push(LineKind::System, "no sessions".to_string()),
                 }
             }
             Slash::Resume(id) => {
+                if id.is_none() || id.as_deref() == Some("") {
+                    self.open_resume_picker();
+                    return;
+                }
                 let target = self.resolve_session_arg(id.as_deref());
                 match target {
                     Some(rid) => {
@@ -556,7 +776,9 @@ impl App {
                             self.spawn_agent(req);
                         }
                     }
-                    None => self.transcript.push(LineKind::System, "no sessions".to_string()),
+                    None => self
+                        .transcript
+                        .push(LineKind::System, "no sessions".to_string()),
                 }
             }
             Slash::Usage(period) => {
@@ -629,27 +851,43 @@ impl App {
                 self.push_multi(&text);
             }
             Slash::Skills(arg) => {
-                let text = crate::ui::render_slash_skills(&self.config.workspace, arg.as_deref());
-                self.push_multi(&text);
+                if arg.is_none() {
+                    self.open_skills_picker();
+                } else {
+                    let text =
+                        crate::ui::render_slash_skills(&self.config.workspace, arg.as_deref());
+                    self.push_multi(&text);
+                }
             }
             Slash::Compact => {
-                self.transcript.push(LineKind::System, "compact is not supported in the TUI yet".to_string());
+                self.transcript.push(
+                    LineKind::System,
+                    "compact is not supported in the TUI yet".to_string(),
+                );
             }
             Slash::Login(_) => {
-                self.transcript
-                    .push(LineKind::System, "run `fxrs login` outside the TUI to authenticate".to_string());
+                self.transcript.push(
+                    LineKind::System,
+                    "run `fxrs login` outside the TUI to authenticate".to_string(),
+                );
             }
             Slash::Logout(_) => {
-                self.transcript
-                    .push(LineKind::System, "run `fxrs logout` outside the TUI".to_string());
+                self.transcript.push(
+                    LineKind::System,
+                    "run `fxrs logout` outside the TUI".to_string(),
+                );
             }
             Slash::Credits => {
-                self.transcript
-                    .push(LineKind::System, "run `fxrs credits` outside the TUI".to_string());
+                self.transcript.push(
+                    LineKind::System,
+                    "run `fxrs credits` outside the TUI".to_string(),
+                );
             }
             Slash::Stats => {
-                self.transcript
-                    .push(LineKind::System, "run `fxrs credits` outside the TUI".to_string());
+                self.transcript.push(
+                    LineKind::System,
+                    "run `fxrs credits` outside the TUI".to_string(),
+                );
             }
             Slash::Unknown(u) => {
                 self.transcript
@@ -660,13 +898,125 @@ impl App {
 
     fn resolve_session_arg(&self, id: Option<&str>) -> Option<String> {
         match id {
-            Some("last") | None => self
-                .store
-                .list(Some(&self.config.workspace))
-                .ok()
-                .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0).id) }),
+            Some("last") | None => {
+                self.store
+                    .list(Some(&self.config.workspace))
+                    .ok()
+                    .and_then(|mut v| {
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some(v.remove(0).id)
+                        }
+                    })
+            }
             Some(t) => Some(t.to_string()),
         }
+    }
+
+    /// Build the resume picker from the session store and open the mode.
+    fn open_resume_picker(&mut self) {
+        let mut items: Vec<PickerItem> = Vec::new();
+        match self.store.list(Some(&self.config.workspace)) {
+            Ok(list) => {
+                for sm in list.iter().take(200) {
+                    let mut it = PickerItem::new(
+                        format!("{}  {}", screens::short_id(&sm.id), sm.model),
+                        sm.id.clone(),
+                    );
+                    it.detail = Some(format!(
+                        "{} msgs · {}k tok · {}",
+                        sm.messages,
+                        sm.tokens / 1000,
+                        sm.last_text.chars().take(90).collect::<String>(),
+                    ));
+                    items.push(it);
+                }
+            }
+            Err(e) => {
+                items.push(PickerItem::new(format!("(error: {e:#})"), ""));
+            }
+        }
+        if items.is_empty() {
+            items.push(PickerItem::new(
+                "(no sessions — press enter to create one)",
+                "",
+            ));
+        }
+        self.pick_resume.set_items(items);
+        self.mode = Mode::Resume;
+    }
+
+    /// Kick off the gateway model-catalog fetch in the background and open
+    /// the models picker. Shows the resolved model immediately; catalog rows
+    /// arrive over `bg_rx` (spawn_blocking keeps the UI responsive).
+    fn open_models_picker(&mut self) {
+        if !self.models_loading {
+            self.models_loading = true;
+            let tx = self.bg_tx.clone();
+            tokio::task::spawn_local(async move {
+                let store = crate::auth::load().unwrap_or_default();
+                let (key, team_url) = crate::auth::resolve_key("gateway", &store);
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::gateway::fetch_catalog(key.as_deref(), team_url.as_deref())
+                })
+                .await;
+                let ev = match result {
+                    Ok(crate::gateway::CatalogResult::Loaded { entries, .. }) => {
+                        Ev::ModelsCatalog(Ok(entries))
+                    }
+                    Ok(crate::gateway::CatalogResult::Failed { failure, .. }) => {
+                        Ev::ModelsCatalog(Err(failure.describe()))
+                    }
+                    Err(e) => Ev::ModelsCatalog(Err(e.to_string())),
+                };
+                let _ = tx.send(ev);
+            });
+        }
+        // Seed the list with the resolved model while the catalog loads.
+        if self.pick_models.items.is_empty() {
+            let resolved = self.model_label();
+            let mut head = PickerItem::new(format!("resolved: {resolved}"), resolved.clone());
+            head.detail = Some("current provider resolution".to_string());
+            head.meta = Some("loading…".to_string());
+            self.pick_models.set_items(vec![head]);
+            self.pick_models.title = "fxrs — model catalog (loading…)".to_string();
+        } else {
+            self.pick_models.title = "fxrs — model catalog".to_string();
+        }
+        self.mode = Mode::Models;
+    }
+
+    /// Discover skills for the workspace and open the skills catalog screen.
+    fn open_skills_picker(&mut self) {
+        let catalog = crate::skills::discover(&self.config.workspace);
+        let mut items: Vec<PickerItem> = Vec::new();
+        for skill in &catalog.skills {
+            let mut it =
+                PickerItem::new(format!("{}/", skill.name), skill.path.display().to_string());
+            it.detail = Some(skill.description.clone());
+            it.meta = Some(if skill.managed_install {
+                "managed".to_string()
+            } else {
+                skill.source.label().to_string()
+            });
+            items.push(it);
+        }
+        if !catalog.diagnostics.is_empty() {
+            for d in &catalog.diagnostics {
+                items.push(PickerItem::new(format!("⚠ {}", d.path.display()), ""));
+            }
+        }
+        if items.is_empty() {
+            items.push(PickerItem::new("(no skills discovered)", ""));
+        }
+        self.pick_skills.set_items(items);
+        self.pick_skills.title = format!(
+            "fxrs — skills ({} skill(s), {} diagnostic(s))",
+            catalog.skills.len(),
+            catalog.diagnostics.len()
+        );
+        self.mode = Mode::Skills;
     }
 
     fn answer_approval(&mut self, allow: bool) {
@@ -681,7 +1031,9 @@ impl App {
     /// receiver so mutation of `self` stays borrow-safe; returns it when the
     /// channel is still open (agent still running).
     fn drain_events(&mut self) {
-        let Some(rx) = self.agent_rx.take() else { return };
+        let Some(rx) = self.agent_rx.take() else {
+            return;
+        };
         let mut still_open = true;
         loop {
             match rx.try_recv() {
@@ -698,10 +1050,44 @@ impl App {
         }
     }
 
+    /// Drain background channel events (model catalog fetches, etc.).
+    fn drain_bg_events(&mut self) {
+        while let Ok(ev) = self.bg_rx.try_recv() {
+            self.handle_ev(ev);
+        }
+    }
+
     fn handle_ev(&mut self, ev: Ev) {
         match ev {
             Ev::Step(_n) => {
                 self.unread = 0;
+            }
+            Ev::ModelsCatalog(Ok(entries)) => {
+                self.models_loading = false;
+                let mut items: Vec<PickerItem> = entries
+                    .iter()
+                    .map(|e| {
+                        let mut it = PickerItem::new(e.id.clone(), e.id.clone());
+                        it.meta = Some(e.capability_flags());
+                        it.detail = Some(format!(
+                            "ctx {} · max {}",
+                            e.context_window.unwrap_or(0),
+                            e.max_tokens.unwrap_or(0),
+                        ));
+                        it
+                    })
+                    .collect();
+                if items.is_empty() {
+                    items.push(PickerItem::new("(catalog empty)", ""));
+                }
+                self.pick_models.set_items(items);
+            }
+            Ev::ModelsCatalog(Err(e)) => {
+                self.models_loading = false;
+                self.pick_models.set_items(vec![PickerItem::new(
+                    format!("catalog unavailable: {e}"),
+                    "",
+                )]);
             }
             Ev::Text(text) => {
                 self.append_assistant(&text);
@@ -718,13 +1104,8 @@ impl App {
                 if res.is_empty() {
                     self.transcript.push(LineKind::Tool, format!("⎿ {name}"));
                 } else {
-                    let preview: String = res
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(160)
-                        .collect();
+                    let preview: String =
+                        res.lines().next().unwrap_or("").chars().take(160).collect();
                     self.transcript
                         .push(LineKind::Tool, format!("⎿ {name} {preview}"));
                 }
@@ -733,7 +1114,8 @@ impl App {
                 self.transcript.push(LineKind::System, text);
             }
             Ev::Error(e) => {
-                self.transcript.push(LineKind::Error, format!("ƒx error: {e}"));
+                self.transcript
+                    .push(LineKind::Error, format!("ƒx error: {e}"));
             }
             Ev::Done => {
                 self.running = None;
@@ -743,7 +1125,7 @@ impl App {
             Ev::Approve(req, answer_tx) => {
                 self.pending_approval = Some(answer_tx);
                 self.approval_req = Some(req);
-                self.mode = Mode::Confirm;
+                self.mode = Mode::Approval;
             }
         }
     }
@@ -783,12 +1165,97 @@ impl App {
 
         self.screen.clear();
 
+        // Dedicated full-frame screens paint over everything else.
+        match self.mode {
+            Mode::Help => {
+                self.help_scroll =
+                    screens::render_help_page(&mut self.screen, &theme, self.help_scroll);
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            Mode::FullTranscript => {
+                let scroll = self.transcript.scroll_line;
+                let _ = screens::render_full_transcript(
+                    &mut self.screen,
+                    &theme,
+                    &mut self.transcript,
+                    scroll,
+                );
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            Mode::Settings => {
+                self.settings_scroll = screens::render_settings_page(
+                    &mut self.screen,
+                    &theme,
+                    &self.settings_lines,
+                    self.settings_scroll,
+                );
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            Mode::Resume => {
+                self.pick_resume.view = self.pick_resume.visible_rows(rows);
+                self.pick_resume.clamp();
+                self.pick_resume.render(
+                    &mut self.screen,
+                    &theme,
+                    "↑↓ navigate · enter resume · q/esc back",
+                );
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            Mode::Models => {
+                let loading_note = if self.models_loading {
+                    " · fetching catalog…"
+                } else {
+                    ""
+                };
+                self.pick_models.title = format!("fxrs — model catalog{loading_note}");
+                self.pick_models.view = self.pick_models.visible_rows(rows);
+                self.pick_models.clamp();
+                self.pick_models.render(
+                    &mut self.screen,
+                    &theme,
+                    "↑↓ navigate · enter select · q/esc back",
+                );
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            Mode::Skills => {
+                self.pick_skills.view = self.pick_skills.visible_rows(rows);
+                self.pick_skills.clamp();
+                self.pick_skills.render(
+                    &mut self.screen,
+                    &theme,
+                    "↑↓ navigate · enter view skill · q/esc back",
+                );
+                self.screen.flush(&mut out)?;
+                let _ = Hide;
+                out.queue(MoveTo(0, 0))?;
+                out.flush()?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
         // Header.
-        let header = format!(
-            "{} · {}",
-            self.model_label(),
-            self.config.permission_mode
-        );
+        let header = format!("{} · {}", self.model_label(), self.config.permission_mode);
         self.screen
             .putstr_styled(0, 0, &header, CellStyle::dim(theme.dim));
 
@@ -797,31 +1264,20 @@ impl App {
         self.transcript
             .render_into(&mut self.screen, &theme, 1, view_rows, theme.assistant);
 
-        // Composer row.
+        // Composer row (hidden under the approval modal).
         let composer_row = rows.saturating_sub(2);
-        if self.mode == Mode::Confirm {
-            if let Some(req) = &self.approval_req {
-                let brief = req.prompt();
-                let line: String = brief.chars().take(140).collect();
-                self.screen
-                    .putstr_styled(composer_row, 0, &line, CellStyle::bold(theme.error));
-            }
-            let allow = "  allow? (y)es / (n)o / (a)lways  ";
-            self.screen
-                .putstr_styled(composer_row, 0, allow, CellStyle::bold(theme.selection));
-        } else {
-            let _ = self
-                .composer
-                .render(&mut self.screen, &theme, composer_row, false);
-        }
+        let _ = self
+            .composer
+            .render(&mut self.screen, &theme, composer_row, false);
 
-        // Footer.
+        // Footer (with a rotating activity spinner while the agent runs).
+        self.spin_frame = self.spin_frame.wrapping_add(1);
         let mode_text = self.config.permission_mode.to_string();
         let running = self.running_task();
         let hints = if running {
             "esc interrupt · ctrl-d exit"
         } else {
-            "esc help · ctrl-d exit · ↑↓ history"
+            "esc help · ctrl-s settings · ctrl-t transcript · ctrl-r resume · ctrl-m models · ctrl-k skills · ctrl-d exit"
         };
         let ws_name = self
             .config
@@ -852,18 +1308,23 @@ impl App {
 
         self.screen.flush(&mut out)?;
 
+        // Approval modal overlay.
+        if self.mode == Mode::Approval {
+            if let Some(req) = &self.approval_req {
+                screens::render_approval_modal(&mut self.screen, &theme, req);
+            }
+        }
+
+        self.screen.flush(&mut out)?;
+
         // Place the cursor.
         match self.mode {
-            Mode::Confirm => {
-                out.queue(MoveTo(0, composer_row))?;
-                out.flush()?;
-            }
-            Mode::Help => {
+            Mode::Approval | Mode::Help | Mode::Settings | Mode::FullTranscript => {
                 let _ = Hide;
                 out.queue(MoveTo(0, 0))?;
                 out.flush()?;
             }
-            Mode::Normal => {
+            _ => {
                 let (cur_row, cur_col) = self.composer.cursor_position_single(composer_row);
                 out.queue(MoveTo(cur_col, cur_row))?;
                 out.flush()?;
@@ -880,6 +1341,7 @@ impl App {
         loop {
             let _ = self.render();
             self.drain_events();
+            self.drain_bg_events();
 
             if self.exit_requested {
                 break;
