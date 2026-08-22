@@ -205,15 +205,12 @@ pub async fn run(
             turn_system.push('\n');
             turn_system.push_str(&exec_memory.snapshot());
         }
-        let mut stream = providers::stream(
-            &provider,
-            &transcript,
-            tools_schema.as_deref(),
-            &turn_system,
-            Some(provider_max_tokens(&provider)),
-        );
-
-        // Accumulate assistant response.
+        // Model-response recovery (upstream model_response_recovery.zig):
+        // provider failures are classified and the decision policy picks
+        // retry (with implicit/explicit backoff) or a terminal pause/stop,
+        // bounded by a per-run attempt budget. The request is re-sent
+        // verbatim on recoverable strategies; accumulators reset each attempt
+        // because a resend replays the response from its beginning.
         let mut text = String::new();
         let mut display_text = String::new();
         let mut calls: BTreeMap<usize, ToolUse> = BTreeMap::new();
@@ -224,72 +221,165 @@ pub async fn run(
         let mut markup_mask = tools::ToolMarkupMask::new();
         let mut reasoning_started = false;
         use futures_util::StreamExt;
-        while let Some(ev) = stream.next().await {
-            match ev {
-                Ok(StreamEvent::TextDelta(s)) => {
-                    text.push_str(&s);
-                    let shown = markup_mask.filter(&s);
-                    display_text.push_str(&shown);
-                    if !shown.is_empty() {
-                        human.text_delta(&shown);
+        let mut provider_attempts = crate::model_response_recovery::AttemptState::default();
+        let mut pacing = crate::model_response_recovery::RetryPacingState::Idle;
+        'provider_attempts: loop {
+            let mut stream = providers::stream(
+                &provider,
+                &transcript,
+                tools_schema.as_deref(),
+                &turn_system,
+                Some(provider_max_tokens(&provider)),
+            );
+            text.clear();
+            display_text.clear();
+            calls.clear();
+            order.clear();
+            while let Some(ev) = stream.next().await {
+                match ev {
+                    Ok(StreamEvent::TextDelta(s)) => {
+                        text.push_str(&s);
+                        let shown = markup_mask.filter(&s);
+                        display_text.push_str(&shown);
+                        if !shown.is_empty() {
+                            human.text_delta(&shown);
+                        }
                     }
-                }
-                Ok(StreamEvent::ReasoningDelta(s)) => {
-                    if !reasoning_started {
-                        human.reasoning_started();
-                        reasoning_started = true;
+                    Ok(StreamEvent::ReasoningDelta(s)) => {
+                        if !reasoning_started {
+                            human.reasoning_started();
+                            reasoning_started = true;
+                        }
+                        human.reasoning_delta(&s);
                     }
-                    human.reasoning_delta(&s);
-                }
-                Ok(StreamEvent::ToolCallStart { index, id, name }) => {
-                    if !calls.contains_key(&index) {
-                        order.push(index);
+                    Ok(StreamEvent::ToolCallStart { index, id, name }) => {
+                        if !calls.contains_key(&index) {
+                            order.push(index);
+                        }
+                        human.trace_tool(name.clone());
+                        calls.insert(
+                            index,
+                            ToolUse {
+                                id,
+                                name,
+                                arguments: String::new(),
+                            },
+                        );
                     }
-                    human.trace_tool(name.clone());
-                    calls.insert(
+                    Ok(StreamEvent::ToolCallArgDelta { index, delta }) => {
+                        if let Some(c) = calls.get_mut(&index) {
+                            c.arguments.push_str(&delta);
+                        }
+                    }
+                    Ok(StreamEvent::ToolCallDone {
                         index,
-                        ToolUse {
-                            id,
-                            name,
-                            arguments: String::new(),
-                        },
-                    );
-                }
-                Ok(StreamEvent::ToolCallArgDelta { index, delta }) => {
-                    if let Some(c) = calls.get_mut(&index) {
-                        c.arguments.push_str(&delta);
+                        id,
+                        name,
+                        input,
+                    }) => {
+                        let args = serde_json::to_string(&input).unwrap_or_default();
+                        if let Some(c) = calls.get_mut(&index) {
+                            c.id = id;
+                            c.name = name;
+                            c.arguments = args;
+                        }
                     }
-                }
-                Ok(StreamEvent::ToolCallDone {
-                    index,
-                    id,
-                    name,
-                    input,
-                }) => {
-                    let args = serde_json::to_string(&input).unwrap_or_default();
-                    if let Some(c) = calls.get_mut(&index) {
-                        c.id = id;
-                        c.name = name;
-                        c.arguments = args;
+                    Ok(StreamEvent::Finish) => {}
+                    Ok(StreamEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    }) => {
+                        let i = input_tokens.unwrap_or(0);
+                        let o = output_tokens.unwrap_or(0);
+                        total_input_tokens = total_input_tokens.saturating_add(i);
+                        total_output_tokens = total_output_tokens.saturating_add(o);
+                        total_tokens = total_tokens.saturating_add(i + o);
                     }
-                }
-                Ok(StreamEvent::Finish) => {}
-                Ok(StreamEvent::Usage {
-                    input_tokens,
-                    output_tokens,
-                }) => {
-                    let i = input_tokens.unwrap_or(0);
-                    let o = output_tokens.unwrap_or(0);
-                    total_input_tokens = total_input_tokens.saturating_add(i);
-                    total_output_tokens = total_output_tokens.saturating_add(o);
-                    total_tokens = total_tokens.saturating_add(i + o);
-                }
-                Err(e) => {
-                    finish = FinishReason::Error;
-                    error = Some(format!("stream error: {e:#}"));
-                    break;
+                    Err(e) => {
+                        let msg = format!("{e:#}");
+                        let Some(cause) = crate::model_response_recovery::classify_failure(&msg)
+                        else {
+                            finish = FinishReason::Error;
+                            error = Some(format!("stream error: {msg}"));
+                            break 'provider_attempts;
+                        };
+                        use crate::model_response_recovery::{
+                            decide, Delivery, OutputEvidence, ToolEvidence,
+                        };
+                        let evidence = crate::model_response_recovery::Evidence {
+                            cause,
+                            delivery: if text.is_empty() && calls.is_empty() {
+                                Delivery::DefinitelyUnsent
+                            } else {
+                                Delivery::PossiblySent
+                            },
+                            attempts: provider_attempts,
+                            output: if text.is_empty() {
+                                OutputEvidence::None
+                            } else {
+                                OutputEvidence::Partial
+                            },
+                            tool: if calls.is_empty() {
+                                ToolEvidence::None
+                            } else {
+                                ToolEvidence::Uncertain
+                            },
+                            pacing,
+                            retry_after_seconds: parse_retry_after(&msg),
+                            cancelled: false,
+                        };
+                        let decision = decide(evidence);
+                        if decision.reserve_provider_attempt {
+                            provider_attempts.consumed += 1;
+                        }
+                        pacing = decision.next_pacing;
+                        match decision.strategy {
+                            crate::model_response_recovery::Strategy::RetryRequest
+                            | crate::model_response_recovery::Strategy::RegenerateTool
+                            | crate::model_response_recovery::Strategy::ContinueResponse
+                            | crate::model_response_recovery::Strategy::ContinueAfterConfirmedTool => {
+                                markup_mask = tools::ToolMarkupMask::new();
+                                reasoning_started = false;
+                                if decision.delay_ns > 0 {
+                                    eprintln!(
+                                        "[fxrs] \x1b[33mprovider {cause:?}; retrying in {:.1}s\x1b[0m",
+                                        decision.delay_ns as f64 / 1_000_000_000.0
+                                    );
+                                    tokio::time::sleep(std::time::Duration::from_nanos(
+                                        decision.delay_ns,
+                                    ))
+                                    .await;
+                                } else {
+                                    eprintln!(
+                                        "[fxrs] \x1b[33mprovider {cause:?}; retrying\x1b[0m"
+                                    );
+                                }
+                                continue 'provider_attempts;
+                            }
+                            _ => {
+                                finish = FinishReason::Error;
+                                error = Some(format!(
+                                    "stream error: {msg} (recovery decision: {:?}{})",
+                                    decision.strategy,
+                                    if decision
+                                        .required_action
+                                        != crate::model_response_recovery::RequiredAction::None
+                                    {
+                                        format!(
+                                            ", action: {:?}",
+                                            decision.required_action
+                                        )
+                                    } else {
+                                        String::new()
+                                    }
+                                ));
+                                break 'provider_attempts;
+                            }
+                        }
+                    }
                 }
             }
+            break;
         }
         let residue = markup_mask.finish();
         if !residue.is_empty() {
@@ -743,4 +833,27 @@ async fn auto_review(
 #[allow(dead_code)]
 fn _price(_: ()) -> f64 {
     0.0
+}
+
+/// Extract a `Retry-After`-style delay from a provider error message.
+/// Upstream reads the HTTP header; we only have the transport error text, so
+/// accept `retry after: <n>` / `retry_after=<n>` / `retry-after: <n>`.
+fn parse_retry_after(msg: &str) -> Option<u64> {
+    let m = msg.to_ascii_lowercase();
+    let needle = [
+        "retry after:",
+        "retry-after:",
+        "retry_after=",
+        "retry after ",
+    ]
+    .iter()
+    .find(|n| m.contains(**n))?;
+    let idx = m.find(needle)? + needle.len();
+    let rest: String = m[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    rest.parse::<u64>()
+        .ok()
+        .filter(|&v| v <= crate::model_response_recovery::MAX_RETRY_AFTER_SECONDS)
 }

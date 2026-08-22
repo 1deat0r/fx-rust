@@ -25,6 +25,7 @@ pub mod mcp;
 pub mod mcp_schema;
 pub mod mcp_transport;
 pub mod model_catalog;
+pub mod model_response_recovery;
 pub mod permissions;
 pub mod providers;
 pub mod sessions;
