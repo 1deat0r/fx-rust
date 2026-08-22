@@ -11,9 +11,64 @@ use crate::config;
 use crate::sessions::SessionStore;
 use crate::ui::QuietHuman;
 
+/// Every top-level command the CLI dispatches (aliases share an arm).
+/// Used by `fxrs --commands` and the AB parity harness
+/// (`scripts/parity_check.sh`) to enumerate the surface without heuristics.
+pub const TOP_LEVEL_COMMANDS: &[&str] = &[
+    "repl",
+    "ask",
+    "resume",
+    "sessions",
+    "session",
+    "status",
+    "permissions",
+    "models",
+    "modes",
+    "subagent",
+    "tui",
+    "teams",
+    "workspace",
+    "capture",
+    "one-off",
+    "review",
+    "mcp-lookup",
+    "doctor",
+    "usage",
+    "settings",
+    "replay",
+    "setup",
+    "version",
+    "help",
+    "auth",
+    "login",
+    "logout",
+    "upgrade",
+    "hooks",
+    "mcp",
+    "gh",
+    "pr",
+    "issue",
+    "credits",
+    "provider",
+    "diff",
+    "skills",
+    "background",
+    "terminal",
+    "sound",
+];
+
 pub async fn run_main(args: Vec<String>) -> Result<i32> {
     let mut args = args.iter().skip(1); // drop argv[0]
     let cmd = args.next();
+
+    // Surface enumeration (AB parity harness). Must handle --commands before
+    // the match because it is a meta-command, not a dispatch arm.
+    if cmd.map(|s| s.as_str()) == Some("--commands") {
+        for c in TOP_LEVEL_COMMANDS {
+            println!("{c}");
+        }
+        return Ok(0);
+    }
 
     match cmd.map(|s| s.as_str()) {
         None | Some("") | Some("repl") => {
@@ -2276,7 +2331,22 @@ fn show_cli_help() {
          \x1b[32m  fxrs replay <id>\x1b[0m         replay a session transcript\n\
          \x1b[32m  fxrs setup\x1b[0m              provider configuration guide\n\
          \x1b[32m  fxrs version\x1b[0m            version info\n\
-         \x1b[32m  fxrs help\x1b[0m               this help\n\n\
+         \x1b[32m  fxrs help\x1b[0m               this help\n\
+         \x1b[32m  fxrs --commands\x1b[0m          list every top-level command\n\
+         \x1b[32m  fxrs auth\x1b[0m                API-key store (add/list/remove/status)\n\
+         \x1b[32m  fxrs login / logout\x1b[0m      gateway authentication\n\
+         \x1b[32m  fxrs hooks\x1b[0m               list lifecycle hook definitions\n\
+         \x1b[32m  fxrs mcp\x1b[0m                 list MCP servers / tools\n\
+         \x1b[32m  fxrs gh\x1b[0m                  git snapshot + pr/issue publish\n\
+         \x1b[32m  fxrs pr / issue\x1b[0m          publish PRs / issues (gh workflow)\n\
+         \x1b[32m  fxrs credits\x1b[0m             gateway credits balance\n\
+         \x1b[32m  fxrs provider\x1b[0m            resolve provider from env\n\
+         \x1b[32m  fxrs diff <a> <b>\x1b[0m        unified line diff\n\
+         \x1b[32m  fxrs skills\x1b[0m              skills catalog (install/remove)\n\
+         \x1b[32m  fxrs background\x1b[0m          background process supervision\n\
+         \x1b[32m  fxrs terminal\x1b[0m            terminal sessions (native/tmux)\n\
+         \x1b[32m  fxrs sound\x1b[0m               notification/sound preferences\n
+\
          Environment: FX_MODEL, FX_PERMISSION_MODE, AI_GATEWAY_API_KEY,\n\
          FX_GATEWAY_BASE_URL, ANTHROPIC_API_KEY, AI_BASE_URL, AI_API_KEY\n\
          Config: ~/.fx/settings.json, <workspace>/.fx.json (see README)"
