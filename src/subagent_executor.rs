@@ -117,7 +117,23 @@ pub async fn run_work_item(
             child_config.reasoning_effort = Some(effort);
         }
     }
-    if let Some(admission) = record.admission.clone() {
+    // Resume admission: when the child is run again the manager re-derives
+    // authority from the live configuration (model may have changed, mode may
+    // have changed); the parent's tool restriction persists across resume.
+    let parent_id = record
+        .parent_id
+        .clone()
+        .unwrap_or_else(|| "parent".to_string());
+    if let Ok(resumed) = crate::subagent_authority::resume_admission(
+        &record,
+        &parent_id,
+        &crate::operation_id::operation_id("subagent-resume"),
+    ) {
+        record.admission = Some(resumed.clone());
+        if !resumed.tool_names.is_empty() {
+            child_config.tool_filter = Some(resumed.tool_names);
+        }
+    } else if let Some(admission) = record.admission.clone() {
         if !admission.tool_names.is_empty() {
             child_config.tool_filter = Some(admission.tool_names);
         }
@@ -161,6 +177,21 @@ pub async fn run_work_item(
     }
     ctrl.save(&record)?;
 
+    // Communication: the manager delivers the run outcome to the parent
+    // ledger (upstream deliver_result). Summary is the last assistant text
+    // (or the error), truncated for envelope sanity.
+    let summary = if let Some(err) = &outcome.error {
+        format!("error: {err}")
+    } else {
+        outcome
+            .transcript
+            .iter()
+            .rev()
+            .find_map(|m| m.last_text())
+            .unwrap_or_default()
+    };
+    deliver_result_to_parent(child_id, &work.id, success, summary);
+
     let mut result = json!({
         "ok": success,
         "child_id": child_id,
@@ -186,4 +217,50 @@ fn finish_name(f: FinishReason) -> &'static str {
         FinishReason::Error => "error",
         FinishReason::UserExit => "user_exit",
     }
+}
+
+/// Deliver the child's run outcome to its parent through the communication
+/// ledger (upstream manager's deliver_result): a `Message` envelope with the
+/// textual summary on success, or a `Milestone` envelope named `failed` when
+/// the work item errored. Attaches the work id so the parent can correlate.
+/// Failures write the communication envelope best-effort — the control
+/// transition is the durable record.
+pub fn deliver_result_to_parent(child_id: &str, work_id: &str, success: bool, summary: String) {
+    use crate::subagent_communication::{deliver, CommunicationStore};
+    use crate::subagent_control::DeliveryPayload;
+
+    // Authoritative parent id comes from the control record.
+    let parent_id = match SubagentStore::new().and_then(|store| store.load(child_id)) {
+        Ok(Some(record)) => record
+            .parent_id
+            .clone()
+            .unwrap_or_else(|| "parent".to_string()),
+        _ => "parent".to_string(),
+    };
+    let Ok(store) = CommunicationStore::new() else {
+        return;
+    };
+    let Ok(mut ledger) = store.load(child_id) else {
+        return;
+    };
+    let payload = if success {
+        DeliveryPayload::Message(summary)
+    } else {
+        DeliveryPayload::Milestone("failed".to_string())
+    };
+    let mut delivery = deliver(
+        &mut ledger,
+        child_id,
+        &parent_id,
+        payload,
+        crate::subagent_control::now_ms(),
+    );
+    delivery.work_id = Some(work_id.to_string());
+    delivery.operation_id = Some(crate::operation_id::operation_id("subagent-delivery"));
+    if let Some(last) = ledger.deliveries.last_mut() {
+        if last.sequence == delivery.sequence {
+            *last = delivery;
+        }
+    }
+    let _ = store.save(&ledger);
 }

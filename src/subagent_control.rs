@@ -56,7 +56,7 @@ pub struct ToolActivity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum DeliveryPayload {
     Message(String),
     Milestone(String),
@@ -64,6 +64,20 @@ pub enum DeliveryPayload {
     Interval { state: State, coalesced_ticks: u32 },
     Approval(String),
     ToolActivity(ToolActivity),
+}
+
+impl DeliveryPayload {
+    /// Payload kind without moving out of the payload.
+    pub fn delivery_kind(&self) -> DeliveryKind {
+        match self {
+            DeliveryPayload::Message(_) => DeliveryKind::Message,
+            DeliveryPayload::Milestone(_) => DeliveryKind::Milestone,
+            DeliveryPayload::Terminal(_) => DeliveryKind::Terminal,
+            DeliveryPayload::Interval { .. } => DeliveryKind::Interval,
+            DeliveryPayload::Approval(_) => DeliveryKind::Approval,
+            DeliveryPayload::ToolActivity(_) => DeliveryKind::ToolActivity,
+        }
+    }
 }
 
 /// One immutable communication envelope (upstream `Delivery`).

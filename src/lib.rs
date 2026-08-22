@@ -37,6 +37,7 @@ pub mod settings_catalog;
 pub mod shell_command;
 pub mod slash_commands;
 pub mod subagent_authority;
+pub mod subagent_communication;
 pub mod subagent_control;
 pub mod subagent_domain;
 pub mod subagent_executor;

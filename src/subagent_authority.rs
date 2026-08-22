@@ -144,6 +144,58 @@ pub fn capture_admission(input: &AdmissionInput) -> Result<AdmissionSnapshot, Ad
     })
 }
 
+/// Resume admission — upstream `domain.resumeAdmission`. When a child is
+/// resumed (run again after interruption) the manager re-derives authority
+/// from the record's *live* configuration instead of trusting a stale
+/// snapshot: model, permission mode and any configured tool filter are
+/// authoritative. A pre-existing tool filter is preserved when the live
+/// configuration carries none (the parent's restriction stays in force
+/// across resume).
+pub fn resume_admission(
+    record: &crate::subagent_control::SubagentRecord,
+    parent_id: &str,
+    source_id: &str,
+) -> Result<AdmissionSnapshot, AdmissionError> {
+    // An unset live model means "inherit the parent's model"; capture still
+    // wants a non-empty value, so fall back to the prior snapshot's model
+    // and otherwise to the explicit inherit marker `default` (the executor
+    // only consumes permission mode + tool names from the snapshot).
+    let model = record
+        .configuration
+        .model
+        .clone()
+        .or_else(|| {
+            record
+                .admission
+                .as_ref()
+                .map(|a| a.model.clone())
+                .filter(|m| !m.is_empty())
+        })
+        .unwrap_or_else(|| "default".into());
+    let mut input = AdmissionInput {
+        parent_id: parent_id.to_string(),
+        source_id: source_id.to_string(),
+        model,
+        permission_mode: PermissionMode::parse(&record.configuration.permission_mode)
+            .unwrap_or(PermissionMode::Auto),
+        tool_names: Vec::new(),
+        ..Default::default()
+    };
+    // The parent's tool restriction persists across resume unless the live
+    // configuration carries a model change that invalidates it — we keep the
+    // prior snapshot's filter (upstream preserves admission tool names).
+    if let Some(prior) = &record.admission {
+        input.tool_names = prior.tool_names.clone();
+    }
+    let mut snapshot = capture_admission(&input)?;
+    snapshot.authority_generation = record
+        .admission
+        .as_ref()
+        .map(|a| a.authority_generation.saturating_add(1))
+        .unwrap_or(0);
+    Ok(snapshot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +244,30 @@ mod tests {
             capture_admission(&bad).unwrap_err(),
             AdmissionError::TooManyAdmissionItems
         );
+    }
+
+    #[test]
+    fn resume_recaptures_from_live_config_and_bumps_generation() {
+        let mut record = crate::subagent_control::SubagentRecord::default();
+        record.configuration.model = Some("claude-haiku-4-5".into());
+        record.configuration.permission_mode = "yolo".into();
+        record.admission = Some(capture_admission(&input()).unwrap());
+        let resumed = resume_admission(&record, "parent-1", "call-9").unwrap();
+        assert_eq!(resumed.model, "claude-haiku-4-5");
+        assert_eq!(resumed.permission_mode, PermissionMode::Yolo);
+        assert_eq!(resumed.authority_generation, 1);
+        // The prior tool restriction is preserved across resume.
+        let expected: Vec<String> = vec!["read_file".into(), "run_command".into()];
+        assert_eq!(resumed.tool_names, expected);
+    }
+
+    #[test]
+    fn resume_without_prior_admission_starts_generation_zero() {
+        let mut record = crate::subagent_control::SubagentRecord::default();
+        record.configuration.permission_mode = "auto".into();
+        let resumed = resume_admission(&record, "parent-1", "call-1").unwrap();
+        assert_eq!(resumed.authority_generation, 0);
+        assert!(resumed.tool_names.is_empty());
     }
 
     #[test]

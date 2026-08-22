@@ -1059,6 +1059,90 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             }
             Ok(0)
         }
+        "deliveries" => {
+            let id = args
+                .iter()
+                .position(|a| a == "deliveries")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent deliveries <id> [--after N] [--limit N] [--json]");
+            };
+            let comm = crate::subagent_communication::CommunicationStore::new()?;
+            let ledger = comm.load(id)?;
+            let after = args
+                .iter()
+                .position(|a| a == "--after")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let limit = args
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(crate::subagent_domain::DEFAULT_PAGE_LIMIT);
+            let page = crate::subagent_communication::read_page(&ledger, after, limit);
+            if args.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                if page.is_empty() {
+                    println!("no deliveries");
+                }
+                for d in page {
+                    println!(
+                        "d-{}  {} -> {}  {}",
+                        d.sequence,
+                        d.source_id,
+                        d.target_id,
+                        describe_payload(&d.payload)
+                    );
+                }
+                println!(
+                    "cursor: {}",
+                    crate::subagent_communication::cursor_for(&ledger, "parent-model")
+                );
+            }
+            Ok(0)
+        }
+        "parent-turn" => {
+            let id = args
+                .iter()
+                .position(|a| a == "parent-turn")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent parent-turn <parent-id> [--limit N] [--json]");
+            };
+            let limit = args
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(crate::subagent_domain::DEFAULT_PAGE_LIMIT);
+            let store = crate::subagent_control::SubagentStore::new()?;
+            let records = crate::subagent_relationship::load_records(&store);
+            let children = crate::subagent_relationship::children_of(&records, id);
+            let comm = crate::subagent_communication::CommunicationStore::new()?;
+            let deliveries = crate::subagent_communication::project_parent_deliveries(
+                &comm, &children, id, limit,
+            );
+            if args.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string_pretty(&deliveries)?);
+            } else {
+                if deliveries.is_empty() {
+                    println!("no deliveries for parent `{id}`");
+                }
+                for d in deliveries {
+                    println!(
+                        "d-{}  {} -> {}  {}",
+                        d.sequence,
+                        d.source_id,
+                        d.target_id,
+                        describe_payload(&d.payload)
+                    );
+                }
+            }
+            Ok(0)
+        }
         "inspect" => {
             let id = args
                 .iter()
@@ -1171,6 +1255,36 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             .map_err(|e| anyhow::anyhow!("invalid message command: {e}"))?;
             let outcome = apply_command(&mut record, &cmd, now_ms())?;
             store.save(&record)?;
+            // Deliveries: message sends append a Message delivery; milestones
+            // append a Milestone delivery (upstream communication_manager).
+            let comm = crate::subagent_communication::CommunicationStore::new()?;
+            let mut ledger = comm.load(&record.child_id)?;
+            match kind {
+                Some("send") => {
+                    crate::subagent_communication::deliver(
+                        &mut ledger,
+                        "parent",
+                        &record.child_id,
+                        crate::subagent_control::DeliveryPayload::Message(payload.to_string()),
+                        now_ms(),
+                    );
+                }
+                Some("milestone") => {
+                    crate::subagent_communication::deliver(
+                        &mut ledger,
+                        &record.child_id,
+                        record
+                            .parent_id
+                            .clone()
+                            .unwrap_or_else(|| "parent".into())
+                            .as_str(),
+                        crate::subagent_control::DeliveryPayload::Milestone(payload.to_string()),
+                        now_ms(),
+                    );
+                }
+                _ => {}
+            }
+            comm.save(&ledger)?;
             println!("message applied: {outcome:?}");
             Ok(0)
         }
@@ -1393,6 +1507,33 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
         }
         other => {
             bail!("unknown subagent command: {other}");
+        }
+    }
+}
+
+fn describe_payload(payload: &crate::subagent_control::DeliveryPayload) -> String {
+    match payload {
+        crate::subagent_control::DeliveryPayload::Message(text) => {
+            let s: String = text.chars().take(80).collect();
+            format!("message: {s}")
+        }
+        crate::subagent_control::DeliveryPayload::Milestone(name) => format!("milestone: {name}"),
+        crate::subagent_control::DeliveryPayload::Terminal(state) => {
+            format!("terminal: {state:?}")
+        }
+        crate::subagent_control::DeliveryPayload::Interval {
+            state,
+            coalesced_ticks,
+        } => {
+            format!("interval: {state:?} ticks={coalesced_ticks}")
+        }
+        crate::subagent_control::DeliveryPayload::Approval(label) => format!("approval: {label}"),
+        crate::subagent_control::DeliveryPayload::ToolActivity(activity) => {
+            format!(
+                "tool_activity: {} {}",
+                activity.tool_name,
+                format!("{:?}", activity.phase).to_lowercase()
+            )
         }
     }
 }
