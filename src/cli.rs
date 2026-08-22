@@ -1104,6 +1104,213 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             }
             Ok(0)
         }
+        "approvals" => {
+            let id = args
+                .iter()
+                .position(|a| a == "approvals")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent approvals <child-id> [--pending] [--limit N] [--json]");
+            };
+            let limit = args
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(crate::subagent_domain::DEFAULT_PAGE_LIMIT);
+            let pending_only = args.iter().any(|a| a == "--pending");
+            let comm = crate::subagent_communication::CommunicationStore::new()?;
+            let ledger = comm.load(id)?;
+            let approvals: Vec<_> = ledger
+                .approvals
+                .iter()
+                .filter(|a| {
+                    !pending_only || a.status == crate::subagent_approval::ApprovalStatus::Pending
+                })
+                .take(limit)
+                .collect();
+            if args.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string_pretty(&approvals)?);
+            } else {
+                if approvals.is_empty() {
+                    println!("no approvals");
+                }
+                for a in approvals {
+                    println!(
+                        "{}  {}  {}://{}  status={:?}  {}",
+                        a.id,
+                        match a.kind {
+                            crate::subagent_approval::ApprovalKind::Tool => "tool",
+                            crate::subagent_approval::ApprovalKind::Relationship => "relationship",
+                        },
+                        a.child_id,
+                        a.root_id,
+                        a.status,
+                        shade_n(&a.label, 60)
+                    );
+                }
+            }
+            Ok(0)
+        }
+        "approval" => {
+            let action = args
+                .iter()
+                .position(|a| a == "approval")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            let Some(action) = action.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent approval resolve <child-id> <request-id> once|always|deny [--feedback TEXT]");
+            };
+            match action {
+                "register" => {
+                    // fxrs subagent approval register <child-id> <request-id> <label> [--tool|--relationship] [--root ROOT] [--work WORK] [--command CMD] [--explanation TEXT]
+                    let id = args
+                        .iter()
+                        .position(|a| a == "register")
+                        .and_then(|i| args.get(i + 1));
+                    let req = args
+                        .iter()
+                        .position(|a| a == "register")
+                        .and_then(|i| args.get(i + 2));
+                    let label = args
+                        .iter()
+                        .position(|a| a == "register")
+                        .and_then(|i| args.get(i + 3));
+                    let (Some(id), Some(req), Some(label)) = (
+                        id.filter(|s| !s.starts_with('-')),
+                        req.filter(|s| !s.starts_with('-')),
+                        label.filter(|s| !s.starts_with('-')),
+                    ) else {
+                        bail!("usage: fxrs subagent approval register <child-id> <request-id> <label> [--tool|--relationship] [--root ROOT] [--work WORK] [--command CMD] [--explanation TEXT]");
+                    };
+                    let kind = if args.iter().any(|a| a == "--relationship") {
+                        crate::subagent_approval::ApprovalKind::Relationship
+                    } else {
+                        crate::subagent_approval::ApprovalKind::Tool
+                    };
+                    let root = args
+                        .iter()
+                        .position(|a| a == "--root")
+                        .and_then(|i| args.get(i + 1))
+                        .cloned()
+                        .unwrap_or_else(|| "parent".to_string());
+                    let work = args
+                        .iter()
+                        .position(|a| a == "--work")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string());
+                    let command = args
+                        .iter()
+                        .position(|a| a == "--command")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string());
+                    let explanation = args
+                        .iter()
+                        .position(|a| a == "--explanation")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string());
+                    let input = crate::subagent_approval::ApprovalInput {
+                        id: req.to_string(),
+                        kind,
+                        child_id: id.to_string(),
+                        root_id: root,
+                        work_id: work,
+                        relationship: None,
+                        prepared_fingerprint: [3u8; 32],
+                        label: label.to_string(),
+                        explanation,
+                        command,
+                        grants: vec![(label.to_string(), "*".into())],
+                        created_at_ms: now_ms(),
+                    };
+                    let comm = crate::subagent_communication::CommunicationStore::new()?;
+                    let mut ledger = comm.load(id)?;
+                    let result = crate::subagent_approval::register_approval(&mut ledger, input)?;
+                    comm.save(&ledger)?;
+                    println!("approval registered: {result:?}");
+                    Ok(0)
+                }
+                "resolve" => {
+                    let id = args
+                        .iter()
+                        .position(|a| a == "resolve")
+                        .and_then(|i| args.get(i + 1));
+                    let req = args
+                        .iter()
+                        .position(|a| a == "resolve")
+                        .and_then(|i| args.get(i + 2));
+                    let decision = args
+                        .iter()
+                        .position(|a| a == "resolve")
+                        .and_then(|i| args.get(i + 3));
+                    let (Some(id), Some(req), Some(decision)) =
+                        (id.filter(|s| !s.starts_with('-')), req.filter(|s| !s.starts_with('-')), decision.filter(|s| !s.starts_with('-')))
+                    else {
+                        bail!("usage: fxrs subagent approval resolve <child-id> <request-id> once|always|deny [--feedback TEXT]");
+                    };
+                    let decision = match decision.as_str() {
+                        "once" => crate::subagent_approval::ApprovalDecision::Once,
+                        "always" => crate::subagent_approval::ApprovalDecision::Always,
+                        "deny" => crate::subagent_approval::ApprovalDecision::Deny,
+                        _ => bail!("decision must be once|always|deny"),
+                    };
+                    let feedback = args
+                        .iter()
+                        .position(|a| a == "--feedback")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string());
+                    let comm = crate::subagent_communication::CommunicationStore::new()?;
+                    let mut ledger = comm.load(id)?;
+                    let ctrl = SubagentStore::new()?;
+                    let mut record = ctrl
+                        .load(id)?
+                        .ok_or_else(|| anyhow::anyhow!("no subagent `{id}`"))?;
+                    let context = crate::subagent_approval::ApprovalContext {
+                        attached: record.parent_id.is_some(),
+                        child_cancelled: record.state == crate::subagent_domain::State::Cancelled,
+                        child_closed: record.state == crate::subagent_domain::State::Archived,
+                    };
+                    let response = crate::subagent_approval::ApprovalResponse {
+                        request_id: req.to_string(),
+                        child_id: id.to_string(),
+                        decision,
+                        feedback,
+                        timestamp_ms: now_ms(),
+                    };
+                    let revision = ledger.generation;
+                    let outcome = crate::subagent_approval::resolve_approval(
+                        &mut ledger,
+                        &response,
+                        &context,
+                        revision,
+                    )?;
+                    comm.save(&ledger)?;
+                    // Approval resolutions that grant one-shot / always keep
+                    // the work running; denied resolves cancel the work item.
+                    if outcome == crate::subagent_approval::ApprovalDecisionOutcome::Deny {
+                        if let Some(work_id) = ledger
+                            .approvals
+                            .iter()
+                            .find(|a| a.id == *req)
+                            .and_then(|a| a.work_id.clone())
+                        {
+                            if let Some(w) =
+                                record.queue.iter_mut().find(|w| w.id == work_id)
+                            {
+                                w.status = crate::subagent_domain::QueueStatus::Cancelled;
+                            }
+                            record.updated_at_ms = now_ms();
+                            let _ = ctrl.save(&record);
+                        }
+                    }
+                    println!("approval resolved: {outcome:?}");
+                    Ok(0)
+                }
+                _ => bail!(
+                    "usage: fxrs subagent approval resolve <child-id> <request-id> once|always|deny [--feedback TEXT]"
+                ),
+            }
+        }
         "parent-turn" => {
             let id = args
                 .iter()
@@ -1414,6 +1621,27 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
                 .map_err(|e| anyhow::anyhow!("invalid lifecycle command: {e}"))?;
             let outcome = apply_command(&mut record, &cmd, now_ms())?;
             store.save(&record)?;
+            // Cancelling/closing a child invalidates its pending approvals
+            // (upstream approval_persistence.invalidate).
+            if matches!(action, LifecycleAction::Cancel | LifecycleAction::Close) {
+                let comm = crate::subagent_communication::CommunicationStore::new()?;
+                let mut ledger = comm.load(id)?;
+                let status = if action == LifecycleAction::Cancel {
+                    crate::subagent_approval::ApprovalStatus::Cancelled
+                } else {
+                    crate::subagent_approval::ApprovalStatus::Stale
+                };
+                let revision = ledger.generation;
+                let changed = crate::subagent_approval::invalidate_child_approvals(
+                    &mut ledger,
+                    id,
+                    status,
+                    now_ms(),
+                    revision,
+                );
+                comm.save(&ledger)?;
+                println!("approvals invalidated: {changed}");
+            }
             println!("lifecycle: {outcome:?}");
             Ok(0)
         }
@@ -1501,6 +1729,24 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             let Some(id) = id.filter(|s| !s.starts_with('-')) else {
                 bail!("usage: fxrs subagent delete <id>");
             };
+            {
+                // Delete removes the control record; pending approvals are
+                // invalidated so a later parent-turn can't see stale ones.
+                let comm = crate::subagent_communication::CommunicationStore::new()?;
+                let mut ledger = comm.load(id)?;
+                let revision = ledger.generation;
+                let changed = crate::subagent_approval::invalidate_child_approvals(
+                    &mut ledger,
+                    id,
+                    crate::subagent_approval::ApprovalStatus::Stale,
+                    now_ms(),
+                    revision,
+                );
+                comm.save(&ledger)?;
+                if changed > 0 {
+                    println!("approvals invalidated: {changed}");
+                }
+            }
             store.delete(id)?;
             println!("deleted subagent `{id}`");
             Ok(0)
@@ -1508,6 +1754,14 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
         other => {
             bail!("unknown subagent command: {other}");
         }
+    }
+}
+
+fn shade_n(s: &str, n: usize) -> String {
+    if s.len() > n {
+        format!("{}…", s.chars().take(n).collect::<String>())
+    } else {
+        s.to_string()
     }
 }
 

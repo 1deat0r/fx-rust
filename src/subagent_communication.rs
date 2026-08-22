@@ -49,6 +49,11 @@ pub struct Ledger {
     pub deliveries: Vec<Delivery>,
     pub cursors: Vec<ConsumerCursor>,
     pub work_notifications: Vec<WorkNotification>,
+    /// Durable approval records (upstream `communication.Ledger.approvals`,
+    /// bounded at [`MAX_APPROVALS`]). Kept on the same ledger so approvals
+    /// and deliveries commit atomically.
+    #[serde(default)]
+    pub approvals: Vec<crate::subagent_approval::Approval>,
     pub parent_turn_evicted_through: u64,
     pub authority_generation: u64,
 }
@@ -63,6 +68,7 @@ impl Default for Ledger {
             deliveries: Vec::new(),
             cursors: Vec::new(),
             work_notifications: Vec::new(),
+            approvals: Vec::new(),
             parent_turn_evicted_through: 0,
             authority_generation: 0,
         }
