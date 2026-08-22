@@ -73,10 +73,12 @@ supervisor, native-PTY/tmux terminal sessions + `terminal exec` +
 `browser_terminal`, the terminal takeover decision layer, the model-response
 recovery policy (wired into the agent retry loop), usage recovery (durable
 marker registry + collector), and the local executor (direct read-only +
-approved shell). Still pending: the full TUI render engine + input composer,
-the full subagent subsystem, modes/mods, ACP server, NAPI/WASM bindings +
-JS SDK, OAuth/auth stack, MCP elicitation / OAuth + keychain, GitHub
-`pr`/`issue` flows, and the `gh`/`review`/`capture`/`one-off` CLI commands.
+approved shell). Phase 4 has started: modes/mods registries (builtin ask/code modes with
+read-only tool policy, `fxrs modes`) and the subagent domain model
+(commands, validation, notification policy) are landed; the full subagent
+execution/manager stack, ACP server, NAPI/WASM bindings + JS SDK, OAuth/auth
+stack, MCP elicitation / OAuth + keychain, GitHub `pr`/`issue` flows, and the
+`gh`/`review`/`capture`/`one-off` CLI commands remain.
 See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
