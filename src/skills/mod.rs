@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub mod commands;
 pub mod contract;
+pub mod invocation;
 
 pub use contract::{
     invalid_skill_name_cause, parse_skill_file, resolve_metadata, validate_managed_skill_name,
@@ -26,7 +27,7 @@ pub const SKILL_CHUNK_BYTES_DEFAULT: usize = 20 * 1024;
 
 /// A discovered skill. `managed_install` is true when the skill lives in the
 /// fx managed install root (`~/.fx/skills`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
     pub name: String,
     pub description: String,

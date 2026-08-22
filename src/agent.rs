@@ -127,6 +127,29 @@ pub async fn run(
             crate::skills::SKILL_CATALOG_BYTES_DEFAULT,
         );
         system_base.push_str(&section);
+        // If the user prompt explicitly references a discovered skill, load
+        // its content into the prompt (core/skills/skill_invocation
+        // buildExplicitPromptSection): sigil (/name, $name) or natural
+        // language "use/run ... skill" references, deduped by path.
+        if let Some(prompt) = req.prompt.as_deref() {
+            let matched = crate::skills::invocation::match_explicit_skill_indices(
+                prompt,
+                &skill_catalog.skills,
+            );
+            if !matched.is_empty() {
+                let bindings: Vec<(String, String)> = Vec::new();
+                let (section, _notice) = crate::skills::invocation::build_explicit_prompt_section(
+                    &skill_catalog,
+                    prompt,
+                    &bindings,
+                    32 * 1024,
+                );
+                if !section.is_empty() {
+                    system_base.push('\n');
+                    system_base.push_str(&section);
+                }
+            }
+        }
     }
 
     // Prompt history: append user prompts to ~/.fx/history.jsonl.
