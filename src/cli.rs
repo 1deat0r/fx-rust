@@ -1026,6 +1026,26 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             );
             Ok(0)
         }
+        "run" => {
+            let id = args
+                .iter()
+                .position(|a| a == "run")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent run <id> [--json]");
+            };
+            let wanted_json = args.iter().any(|a| a == "--json");
+            let cfg = config::resolve(&cwd())?;
+            let cfg = Arc::new(cfg);
+            let store = SessionStore::new()?;
+            let result = crate::subagent_executor::run_work_item(cfg, store, id).await?;
+            if wanted_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", serde_json::to_string(&result)?);
+            }
+            Ok(0)
+        }
         "inspect" => {
             let id = args
                 .iter()

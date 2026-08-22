@@ -39,6 +39,7 @@ pub mod slash_commands;
 pub mod subagent_authority;
 pub mod subagent_control;
 pub mod subagent_domain;
+pub mod subagent_executor;
 pub mod tape;
 pub mod terminal;
 pub mod terminal_recovery;
