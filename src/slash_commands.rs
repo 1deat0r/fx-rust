@@ -26,8 +26,10 @@ pub enum Slash {
     Background(Option<String>),
     Terminal(Option<String>),
     Skills(Option<String>),
-    Login,
-    Logout,
+    Login(Option<String>),
+    Logout(Option<String>),
+    Credits,
+    Stats,
     /// Unknown / unimplemented slash command (kept so the shell can explain).
     Unknown(String),
 }
@@ -118,7 +120,7 @@ pub fn catalog() -> &'static [Spec] {
         },
         Spec {
             name: "usage",
-            aliases: &["credits"],
+            aliases: &[],
             usage: "/usage [24h|7d|30d|all]",
             description: "token usage / cost summary",
             ready: true,
@@ -194,6 +196,20 @@ pub fn catalog() -> &'static [Spec] {
             ready: true,
         },
         Spec {
+            name: "credits",
+            aliases: &[],
+            usage: "/credits",
+            description: "show the AI Gateway credit balance",
+            ready: true,
+        },
+        Spec {
+            name: "stats",
+            aliases: &[],
+            usage: "/stats",
+            description: "session / usage statistics",
+            ready: true,
+        },
+        Spec {
             name: "skills",
             aliases: &[],
             usage: "/skills [list|add|install|show|create|remove|path]",
@@ -246,7 +262,7 @@ pub fn parse(line: &str) -> Option<Slash> {
         "sessions" | "ls" => Slash::Sessions,
         "session" => Slash::Session(arg.clone()),
         "resume" | "r" => Slash::Resume(arg.clone()),
-        "usage" | "credits" => Slash::Usage(arg.clone()),
+        "usage" => Slash::Usage(arg.clone()),
         "history" => Slash::History(arg.clone()),
         "doctor" => Slash::Doctor,
         "setup" => Slash::Setup,
@@ -257,8 +273,10 @@ pub fn parse(line: &str) -> Option<Slash> {
         "background" | "bg" => Slash::Background(arg.clone()),
         "terminal" | "term" => Slash::Terminal(arg.clone()),
         "skills" => Slash::Skills(arg.clone()),
-        "login" => Slash::Login,
-        "logout" => Slash::Logout,
+        "login" => Slash::Login(arg.clone()),
+        "logout" => Slash::Logout(arg.clone()),
+        "credits" => Slash::Credits,
+        "stats" => Slash::Stats,
         other => Slash::Unknown(other.to_string()),
     };
     for spec in catalog() {
@@ -304,6 +322,17 @@ mod tests {
         );
         assert_eq!(parse("/usage 7d"), Some(Slash::Usage(Some("7d".into()))));
         assert_eq!(parse("/doctor"), Some(Slash::Doctor));
+        assert_eq!(parse("/credits"), Some(Slash::Credits));
+        assert_eq!(parse("/stats"), Some(Slash::Stats));
+        assert_eq!(
+            parse("/login gateway --key sk-x"),
+            Some(Slash::Login(Some("gateway --key sk-x".into())))
+        );
+        assert_eq!(
+            parse("/logout anthropic"),
+            Some(Slash::Logout(Some("anthropic".into())))
+        );
+        assert_eq!(parse("/skills"), Some(Slash::Skills(None)));
     }
 
     #[test]
