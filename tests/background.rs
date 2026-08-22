@@ -57,21 +57,29 @@ fn start_output_exit_and_stop() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, id);
 
-    // give it a moment, then read output
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // poll until the marker appears, then reconcile -> the process should
+    // have exited with code 0. Polling (not a fixed sleep) keeps the test
+    // robust under load.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut exited = false;
+    let mut exit_code = None;
+    loop {
+        store = BackgroundStore::open().unwrap();
+        let rec = store.get(&id).unwrap().clone();
+        if rec.status == BgStatus::Exited {
+            exited = true;
+            exit_code = rec.exit_code;
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let log = store.log_text(&id, 8192, None).unwrap();
     assert!(log.contains("hello background"), "log: {log}");
-
-    // reconcile -> process should have exited with code 0
-    store = BackgroundStore::open().unwrap();
-    let rec = store.get(&id).unwrap().clone();
-    assert_eq!(
-        rec.status,
-        BgStatus::Exited,
-        "log: {}",
-        store.log_text(&id, 8192, None).unwrap()
-    );
-    assert_eq!(rec.exit_code, Some(0));
+    assert!(exited, "background process did not exit within timeout; log: {log}");
+    assert_eq!(exit_code, Some(0));
 
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -94,13 +102,34 @@ fn stop_terminates_and_reports() {
     let id = rec.id.clone();
     assert!(store.get(&id).unwrap().status == BgStatus::Running);
 
-    // stop with a short grace: SIGTERM should kill `sleep` immediately
+    // stop with a short grace: SIGTERM should kill `sleep` (and its shell)
+    // immediately
     let stopped = store.stop(&id, 2000).unwrap();
     assert!(
         !crate_alive(stopped.pid),
         "process should be gone after stop"
     );
     assert!(stopped.status == BgStatus::Exited);
+
+    // The detached shell is a session/group leader: stopping it must also
+    // terminate its children. `sleep 30` would otherwise linger for 30s.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let out = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg("sleep 30")
+            .output();
+        let remaining = out
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if remaining.is_empty() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("stop() orphaned `sleep 30`; still alive: {remaining}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -111,6 +140,8 @@ fn crate_alive(pid: u32) -> bool {
         std::process::Command::new("kill")
             .arg("-0")
             .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false)

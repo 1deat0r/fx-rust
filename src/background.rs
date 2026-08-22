@@ -302,8 +302,11 @@ impl BackgroundStore {
         })
     }
 
-    /// Stop a running process: SIGTERM, wait up to `timeout_ms`, then SIGKILL.
-    /// Returns the updated record.
+    /// Stop a running process: SIGTERM the process group (the double-fork
+    /// launcher makes the stored pid a session/group leader, so one group
+    /// signal covers the whole tree including `sh` children), wait up to
+    /// `timeout_ms`, then SIGKILL the group. Falls back to pid-only signaling
+    /// when the pid is not a group leader (e.g. the group is gone).
     pub fn stop(&mut self, id: &str, timeout_ms: u64) -> Result<BackgroundRecord> {
         let idx = self
             .records
@@ -314,7 +317,16 @@ impl BackgroundStore {
             bail!("background process `{id}` is not running");
         }
         let pid = self.records[idx].pid;
-        sync_signal(pid, 15); // SIGTERM
+
+        let snapshot = process_table();
+        let pgid = snapshot.iter().find(|p| p.pid == pid).map(|p| p.pgid);
+        let group_leader = pgid == Some(pid);
+
+        if group_leader {
+            sync_group(pid, 15);
+        } else {
+            sync_signal(pid, 15);
+        }
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         while std::time::Instant::now() < deadline {
             if !pid_alive(pid) {
@@ -323,7 +335,10 @@ impl BackgroundStore {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         if pid_alive(pid) {
-            sync_signal(pid, 9); // SIGKILL
+            if group_leader {
+                sync_group(pid, 9);
+            }
+            sync_signal(pid, 9);
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         let code = parse_exit_code(Path::new(&self.records[idx].log_path));
@@ -661,9 +676,13 @@ fn render_tree_nodes(
 }
 
 fn sync_group(pgid: u32, signal: i32) {
+    // Correct argv: `kill -<signal> -- -<pgid>` (negative pid targets the whole
+    // process group). Passing `-- -15` as one token previously made the group
+    // signal a no-op and left children orphaned.
     let _: std::io::Result<std::process::ExitStatus> = Command::new("kill")
-        .arg(format!("-- -{signal}"))
-        .arg(pgid.to_string())
+        .arg(format!("-{signal}"))
+        .arg("--")
+        .arg(format!("-{pgid}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
