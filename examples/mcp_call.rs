@@ -27,7 +27,7 @@ fn main() {
         operation_timeout_ms: None,
     };
 
-    match fxrs::mcp::call(&cfg, &tool, args) {
+    match fxrs::mcp::call(&cfg, &tool, args, std::path::Path::new(".")) {
         Ok(v) => println!("OK {}", serde_json::to_string_pretty(&v).unwrap()),
         Err(e) => {
             eprintln!("ERR {e:#}");

@@ -53,12 +53,23 @@ fn streamable_http_handshake_list_and_call() {
     assert_eq!(tools[0].name, "echo");
     assert_eq!(tools[1].name, "add");
 
-    let result =
-        fxrs::mcp::call(&cfg, "echo", serde_json::json!({"text": "hello remote"})).unwrap();
+    let result = fxrs::mcp::call(
+        &cfg,
+        "echo",
+        serde_json::json!({"text": "hello remote"}),
+        std::path::Path::new("."),
+    )
+    .unwrap();
     assert_eq!(result["content"], "hello remote");
     assert_eq!(result["is_error"], false);
 
-    let result = fxrs::mcp::call(&cfg, "add", serde_json::json!({"a": 2, "b": 41})).unwrap();
+    let result = fxrs::mcp::call(
+        &cfg,
+        "add",
+        serde_json::json!({"a": 2, "b": 41}),
+        std::path::Path::new("."),
+    )
+    .unwrap();
     assert_eq!(result["content"], "43");
 }
 
@@ -68,13 +79,25 @@ fn streamable_http_rejects_invalid_arguments() {
         return;
     };
     let cfg = remote_cfg("demo", "http", url);
-    let err = fxrs::mcp::call(&cfg, "add", serde_json::json!({"a": 1})).unwrap_err();
+    let err = fxrs::mcp::call(
+        &cfg,
+        "add",
+        serde_json::json!({"a": 1}),
+        std::path::Path::new("."),
+    )
+    .unwrap_err();
     assert!(
         err.to_string().contains("missing required property `b`"),
         "{err}"
     );
 
-    let err = fxrs::mcp::call(&cfg, "add", serde_json::json!({"a": "x", "b": 1})).unwrap_err();
+    let err = fxrs::mcp::call(
+        &cfg,
+        "add",
+        serde_json::json!({"a": "x", "b": 1}),
+        std::path::Path::new("."),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("type `integer`"), "{err}");
 }
 

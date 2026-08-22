@@ -69,7 +69,13 @@ fn stdio_handshake_list_and_call() {
     assert_eq!(tools.len(), 1, "expected echo tool");
     assert_eq!(tools[0].name, "echo");
 
-    let result = mcp::call(&cfg, "echo", serde_json::json!({"text": "hello mcp"})).unwrap();
+    let result = mcp::call(
+        &cfg,
+        "echo",
+        serde_json::json!({"text": "hello mcp"}),
+        std::path::Path::new("."),
+    )
+    .unwrap();
     assert_eq!(result["content"], "hello mcp");
     assert_eq!(result["is_error"], false);
 

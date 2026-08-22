@@ -194,6 +194,7 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
                         &full,
                         &serde_json::json!({ "arguments": arguments }),
                         &ctx.config.mcp_servers,
+                        &ctx.config.workspace,
                     ))
                 }
                 _ => Ok(err_json(format!("unknown mcp action: {sub}"))),
@@ -203,6 +204,7 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
             other,
             args,
             &ctx.config.mcp_servers,
+            &ctx.config.workspace,
         )),
         other => bail!("unknown tool: {other}"),
     }

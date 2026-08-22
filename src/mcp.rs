@@ -295,9 +295,15 @@ fn parse_tools(result: &Value, server: &str) -> Result<Vec<McpTool>> {
 
 /// Call `tool` on `server` with `arguments`. Returns a JSON result:
 /// {content: <concatenated text>, is_error: bool}.
-pub fn call(server_cfg: &McpServerConfig, tool: &str, arguments: Value) -> Result<Value> {
+pub fn call(
+    server_cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    workspace_root: &std::path::Path,
+) -> Result<Value> {
     let server_cfg = server_cfg.clone();
     let tool = tool.to_string();
+    let workspace_root = workspace_root.to_path_buf();
     with_timeout(timeout_for(&server_cfg), move || {
         match server_cfg.transport_kind() {
             McpTransport::Stdio => {
@@ -305,12 +311,18 @@ pub fn call(server_cfg: &McpServerConfig, tool: &str, arguments: Value) -> Resul
                 stdio_handshake(&mut session, &server_cfg)?;
                 // No schema validation on the stdio fast path (fresh process
                 // per call); the server reports invalid args directly.
-                let result = stdio_request(
-                    &mut session,
-                    3,
-                    "tools/call",
-                    json!({ "name": tool, "arguments": arguments }),
-                )?;
+                let mut stdio_args = json!({ "name": tool, "arguments": arguments });
+                let mut result = stdio_request(&mut session, 3, "tools/call", stdio_args.clone())?;
+                let mut rounds = 0;
+                while let Some(env) = crate::mcp_ext::parse_mrtr(&result) {
+                    if env.input_required.is_empty() || rounds >= MRTR_MAX_ROUNDS {
+                        break;
+                    }
+                    rounds += 1;
+                    let responses = mrtr_responses(&env, &workspace_root);
+                    crate::mcp_ext::with_responses(&mut stdio_args, &responses);
+                    result = stdio_request(&mut session, 3, "tools/call", stdio_args.clone())?;
+                }
                 tool_result(&result)
             }
             _ => {
@@ -332,15 +344,41 @@ pub fn call(server_cfg: &McpServerConfig, tool: &str, arguments: Value) -> Resul
                         bail!("invalid arguments for {tool}: {joined}");
                     }
                 }
-                let result = client.request(
-                    3,
-                    "tools/call",
-                    json!({ "name": tool, "arguments": arguments }),
-                )?;
+                let mut remote_args = json!({ "name": tool, "arguments": arguments });
+                let mut result = client.request(3, "tools/call", remote_args.clone())?;
+                let mut rounds = 0;
+                while let Some(env) = crate::mcp_ext::parse_mrtr(&result) {
+                    if env.input_required.is_empty() || rounds >= MRTR_MAX_ROUNDS {
+                        break;
+                    }
+                    rounds += 1;
+                    let responses = mrtr_responses(&env, &workspace_root);
+                    crate::mcp_ext::with_responses(&mut remote_args, &responses);
+                    result = client.request(3, "tools/call", remote_args.clone())?;
+                }
                 tool_result(&result)
             }
         }
     })
+}
+
+/// MRTR response folding is served by `src/mcp_ext.rs`; this helper answers
+/// `roots/list` with the workspace root and declines sampling/elicitation
+/// gracefully (elicitation requests surface in the tool output text).
+const MRTR_MAX_ROUNDS: usize = 3;
+
+fn mrtr_responses(
+    env: &crate::mcp_ext::MrtrEnvelope,
+    workspace_root: &std::path::Path,
+) -> Vec<serde_json::Value> {
+    let root = format!("file://{}", workspace_root.to_string_lossy());
+    let mut no_answer = |_req: &crate::mcp_ext::MrtrRequest<'_>| -> Option<String> { None };
+    crate::mcp_ext::build_mrtr_responses(
+        &env.input_required,
+        &[root],
+        crate::mcp_ext::MrtrLimits::default(),
+        &mut no_answer,
+    )
 }
 
 fn tool_result(result: &Value) -> Result<Value> {
@@ -514,7 +552,12 @@ pub fn discover(servers: &[McpServerConfig]) -> McpDiscovery {
 }
 
 /// Execute a `mcp__<server>__<tool>` call given the full config list.
-pub fn execute_mcp(name: &str, args: &Value, servers: &[McpServerConfig]) -> Value {
+pub fn execute_mcp(
+    name: &str,
+    args: &Value,
+    servers: &[McpServerConfig],
+    workspace_root: &std::path::Path,
+) -> Value {
     let Some((server, tool)) = parse_prefixed(name) else {
         return json!({ "error": format!("invalid MCP tool name: {name}") });
     };
@@ -528,7 +571,7 @@ pub fn execute_mcp(name: &str, args: &Value, servers: &[McpServerConfig]) -> Val
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| args.clone());
-    match call(cfg, &tool, args_val) {
+    match call(cfg, &tool, args_val, workspace_root) {
         Ok(v) => v,
         Err(e) => {
             let text = format!("MCP {server}/{tool}: {e:#}");

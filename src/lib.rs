@@ -28,6 +28,7 @@ pub mod history;
 pub mod hooks;
 pub mod input_composer;
 pub mod mcp;
+pub mod mcp_ext;
 pub mod mcp_lookup;
 pub mod mcp_schema;
 pub mod mcp_transport;
