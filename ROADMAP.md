@@ -12,8 +12,9 @@
 |---|---|
 | Upstream | vercel-labs/fx @ v0.0.4 (`cbd5c2e`) |
 | Upstream size | 549 Zig files, ~688K LOC (devbox executor removed upstream before v0.0.5) |
-| Our size today | ~25.7K Rust LOC, 60 source files, 228 tests |
+| Our size today | ~33.7K Rust LOC, 83 source files (incl. tests), 317 tests |
 | Parity definition | Behavioral + surface 1:1: same CLI, tools, config, sessions, hooks, MCP, ACP, TUI, auth, usage reporting, SDK/bindings |
+| Latest | 2026-08-22: skills subsystem landed (`src/skills/`, 3 commits: contract/runtime/commands + invocation); background `stop` group-kill fix |
 
 ## Parity matrix
 
@@ -67,7 +68,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Slash commands | `core/slash_commands/*`, `builtins/commands.zig` | router + catalog landed (P1): help/exit/clear/version/status/model/permissions/sessions/session/resume/usage/doctor/setup/trace/feedback/workspace; compact/login/logout routed as not-ready |
 | Modes & mods | `core/modes/*`, `core/mods/*`, `builtins/modes.zig` | ✅ **P4 — `src/modes.rs` + `src/mods.rs`** (efbb450): ModeSpec/ToolPolicy/Registry + builtin ask/code modes (upstream order), toolAllowed + toolPolicyDeniedJson, `ToolRegistry`/`CommandRegistry` (alias + prefix matching), `mode` config key + `effective_permission_mode`, read-only tool-policy enforcement in the agent, `fxrs modes` CLI |
 | Hooks full | `core/hooks/*` (6 files) | definitions, common, prompt, runtime, tool |
-| Skills full | `core/skills/*`, `ui/skills_screen.zig` | contract, invocation, runtime, commands |
+| Skills full | `core/skills/*` (4 files), `ui/skills_screen.zig` | ✅ **`src/skills/`** — contract (SKILL.md frontmatter parser, block descriptions, byte bounds), runtime (multi-root discovery: 7 workspace roots at every ancestor below home + managed `~/.fx/skills` + 5 compat roots; catalog diagnostics; bounded `<available_skills>` prompt section), invocation (resolve_skill, load_by_identity, sigil + natural-language prompt matching, explicit prompt section), commands (`/skills` list/show/add/install/create/remove/path; local + GitHub install with filters; transactional stage+rename). Wired: `fxrs skills [--json]`, `/skills` slash, agent system prompt advertises + auto-loads matched skills, `skill`/`install_skill` tools rebuilt. screen/menu UI deferred to Phase 5 TUI |
 | Images commands | `core/images/*` (2 files) | attachment + commands |
 | Output/transcript presentation | `core/output/*` | diff, activity, transcript presentation/release, worker status |
 | Workspace runtime | `core/workspace/*` (21 files) | file index, change tracker, grep, glob, path completion, access, menus, diagnostics, metrics, record tape |
@@ -92,7 +93,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | memory | ✅ |
 | web_search · web_fetch | ✅ (subset of upstream runtimes) |
 | ask_user_question | ✅ |
-| skill · install_skill | ✅ |
+| skill · install_skill | ✅ | contract parse + catalog + confined resource reads + managed install |
 | view_image (vision) | ✅ |
 | subagent | 🟡 minimal |
 | mcp (stdio / streamable-http / http-sse) | ✅ |
@@ -109,7 +110,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - **Phase 2 — Protocols & auth.** ✅ MCP streamable HTTP + legacy SSE/http-SSE transports, ✅ endpoint validation, ✅ protocol negotiation (-32022 fallback), ✅ MCP json-schema resolver, ✅ gateway model catalog + availability, ✅ auth store + `fxrs auth`/`login` (API key). Remaining: MCP elicitation, MCP OAuth (DCR + keychain), prompts/history compaction parity.
 - **Phase 3 — Execution & terminal.** ✅ COMPLETE (2026-08-22): background store + detached launch + `background_process` tool (start/list/get_output/log/supervise/tree/stop_tree) + session-tagged records + restore-on-resume banner + `fxrs background` + `/background`. ✅ tmux terminal sessions + native PTY sessions (default backend) + `terminal exec` + `browser_terminal` exec + terminal-recovery decision model. ✅ **Recovery/takeover**: model-response recovery decision model (`src/model_response_recovery.rs`, wired into agent retry loop, commit 847214c), app_terminal takeover decision layer (`src/terminal_takeover.rs`, 70f138a), usage recovery marker registry + collector + agent checkpoint seam + doctor/usage wiring (`src/usage_recovery.rs`, eaa51a4). ✅ **Executors**: upstream removed devbox before v0.0.5; local executor ported (`src/executor.rs`, 9370502).
 - **Phase 4 — Subagent & modes.** ✅ Modes/mods registries (efbb450). ✅ Subagent domain + control store + operation ids + authority + executor + relationship helpers (52f7ae1, 61f5fea, 9bf8b50, 2419eb0, 04d3fea, 6d31fb5): `fxrs subagent` can create/inspect/message/configure/relate/lifecycle/run/delete and renders the parent/child tree; subagents run under their own authority (model, permission mode, admission tool filter). ✅ **Communication store/manager + parent delivery projection + resume admission** (pending commit): `src/subagent_communication.rs` (bounded per-child delivery ledger `~/.fx/subagents/communication/<child>.json`, `deliver`/`read_page`/cursor accounting/`project_child_deliveries`/`project_parent_deliveries` parent-turn fold, work notifications), result delivery wired into the executor (child→parent Message on success / Milestone on failure, work+operation ids attached), `fxrs subagent deliveries <id>` + `fxrs subagent parent-turn <parent-id>` CLI, and `resume_admission` in `src/subagent_authority.rs` (re-derive authority from live config on resumed runs, tool restriction preserved). ✅ **Approval registry/persistence** (this commit): `src/subagent_approval.rs` — durable `Approval` records on the communication ledger (bounded 64), canonical SHA-256 identity fingerprint, `register_approval` (tool/relationship, replay-vs-conflict), pure `decide_approval_response` (upstream exact-once model), durable `resolve_approval` (once/always/deny commits status + resolved revision), `invalidate_child_approvals` (cancelled/stale), paged `snapshot_pending_routes`; Approval deliveries appended on registration; CLI `fxrs subagent approval register|resolve`, `fxrs subagent approvals [--pending] [--json]`; invalidation wired into lifecycle cancel/close and delete. Remaining: subagent UI, modes UI.
-- **Phase 5 — TUI.** Render engine, transcript runtime, footer + input composer, all screens, theme detection, resize, activity, notifications/sounds.
+- **Phase 5 — TUI.** Render engine, transcript runtime, footer + input composer (core landed), all screens, theme detection, resize, activity, notifications/sounds. ✅ skills backend (contract/runtime/invocation/commands) landed before the TUI; remaining: skills screen/menu drawn in the TUI.
 - **Phase 6 — GitHub & advanced CLI.** git context, pr/issue publish, workflows; capture/one-off/gh/review/mcp_lookup commands.
 - **Phase 7 — ACP + SDK/bindings.** ACP server/runner; NAPI + WASM cores; sdk/ JS bindings, term-demo, xterm adapter.
 - **Phase 8 — Hardening.** e2e suite, benchmarks, json-schema corpus, AB parity harness (run upstream fixtures against fxrs).
