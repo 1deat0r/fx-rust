@@ -1315,7 +1315,6 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
                 let by_parent: std::collections::BTreeMap<String, Vec<String>> = records
                     .iter()
                     .filter_map(|r| r.parent_id.clone().map(|p| (p, r.child_id.clone())))
-                    .into_iter()
                     .fold(std::collections::BTreeMap::new(), |mut m, (p, c)| {
                         m.entry(p).or_insert_with(Vec::new).push(c);
                         m
