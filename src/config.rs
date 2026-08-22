@@ -505,6 +505,8 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         .filter(|v| !v.trim().is_empty())
         .map(|v| v.split(':').map(PathBuf::from).collect())
         .or_else(|| {
+            // Layered: workspace/project settings first, then the persistent
+            // per-workspace store from `fxrs workspace add` (env wins above).
             let mut dirs: Vec<PathBuf> = ws_entry
                 .additional_directories
                 .iter()
@@ -513,6 +515,9 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
                 .collect();
             if let Some(proj) = project.additional_directories {
                 dirs.extend(proj.into_iter().map(PathBuf::from));
+            }
+            if let Ok(store) = crate::workspace_cli::WorkspaceDirsStore::open() {
+                dirs.extend(store.dirs_for(workspace));
             }
             if dirs.is_empty() {
                 None

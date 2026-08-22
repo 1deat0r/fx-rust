@@ -11,6 +11,20 @@
 //! tool-call accumulation; both wire formats normalize into `StreamEvent`.
 
 pub mod anthropic;
+
+
+/// Best-effort gateway base URL. Callers join paths onto this; used by the
+/// `teams` CLI for remote team discovery.
+pub fn gateway_base_url() -> Option<String> {
+    std::env::var("FX_GATEWAY_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("AI_GATEWAY_BASE_URL").ok().filter(|s| !s.is_empty()))
+        .or_else(|| {
+            let base = std::env::var("AI_BASE_URL").ok().filter(|s| !s.is_empty())?;
+            Some(base.trim_end_matches('/').to_string())
+        })
+}
 pub mod gateway;
 pub mod sse;
 

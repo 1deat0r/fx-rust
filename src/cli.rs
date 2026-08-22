@@ -836,6 +836,30 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             crate::tui::run_tui(cfg, &store, resume, false).await?;
             Ok(0)
         }
+        Some("teams") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::teams::run_teams(&rest)
+        }
+        Some("workspace") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::workspace_cli::run_workspace(&rest, &cwd())
+        }
+        Some("capture") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::capture::run_capture(&rest, &cwd())
+        }
+        Some("one-off") | Some("oneoff") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::oneoff::run_oneoff(&rest, &cwd()).await
+        }
+        Some("review") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::review::run_review(&rest, &cwd()).await
+        }
+        Some("mcp-lookup") | Some("mcp_lookup") | Some("mcplookup") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            crate::mcp_lookup::run_mcp_lookup(&rest)
+        }
         Some("gh") => {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
             run_gh(&rest).await
@@ -2225,6 +2249,13 @@ fn show_cli_help() {
          \x1b[32m  fxrs models\x1b[0m             show resolved model / provider\n\
          \x1b[32m  fxrs modes\x1b[0m              list built-in modes (ask/code)\n\
          \x1b[32m  fxrs subagent\x1b[0m          manage subagents (create/inspect/message/lifecycle)\n\
+         \x1b[32m  fxrs tui\x1b[0m                full-screen TUI (or FXRS_TUI=1)\n\
+         \x1b[32m  fxrs teams\x1b[0m              choose the AI Gateway team\n\
+         \x1b[32m  fxrs workspace\x1b[0m          manage additional workspace dirs\n\
+         \x1b[32m  fxrs capture\x1b[0m            capture a session transcript to a file\n\
+         \x1b[32m  fxrs one-off\x1b[0m            one-shot prompt, text-only stdout\n\
+         \x1b[32m  fxrs review\x1b[0m             review git changes with the model\n\
+         \x1b[32m  fxrs mcp-lookup\x1b[0m         search the MCP registry\n\
          \x1b[32m  fxrs doctor\x1b[0m            run environment diagnostics\n\
          \x1b[32m  fxrs usage [24h|7d|30d|all]\x1b[0m token usage and cost\n\
          \x1b[32m  fxrs settings\x1b[0m          show catalog + effective settings\n\
@@ -2271,7 +2302,7 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
             "--image" => {
                 i += 1;
                 if let Some(path) = args.get(i) {
-                    if let Ok(img) = load_image_input(Path::new(path)) {
+                    if let Ok(img) = load_image_input_pub(Path::new(path)) {
                         images.push(img);
                     } else {
                         eprintln!("fxrs ask: could not read image {path}; ignoring");
@@ -2333,8 +2364,7 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-#[allow(dead_code)]
-fn load_image_input(path: &Path) -> Result<crate::providers::ImageInput> {
+pub fn load_image_input_pub(path: &Path) -> Result<crate::providers::ImageInput> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)
         .with_context(|| format!("reading {}", path.display()))?;
@@ -2495,7 +2525,72 @@ async fn run_gh(args: &[String]) -> Result<i32> {
             println!("{}", crate::github::feedback_url);
             Ok(0)
         }
-        _ => bail!("usage: fxrs gh snapshot | gh pr create <title>|<body> | gh issue create <title>|<body> | gh feedback"),
+        Some("workflow") => {
+            // Thin workflow surface: `gh workflow draft <text>` prints a
+            // parsed draft; `gh workflow publish [--no-publish]` falls back
+            // to the `gh` CLI's workflow run when available.
+            let action = args
+                .iter()
+                .position(|a| a == "workflow")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            match action {
+                Some("draft") => {
+                    let pos = args.iter().position(|a| a == "draft");
+                    let text = pos
+                        .and_then(|i| {
+                            let rest = &args[i + 1..];
+                            if rest.is_empty() {
+                                None
+                            } else {
+                                Some(rest.join(" "))
+                            }
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("usage: fxrs gh workflow draft <TEXT>"))?;
+                    let draft = crate::github::parse_draft(&text)?;
+                    println!("title: {}", draft.title);
+                    println!("body:\n{}", draft.body);
+                    println!("\n[publish with `fxrs gh workflow --no-publish` or the gh CLI]");
+                    Ok(0)
+                }
+                Some("publish" | "run") => {
+                    let no_publish = args.iter().any(|a| a == "--no-publish");
+                    let text = args
+                        .iter()
+                        .skip_while(|a| a.as_str() != "workflow")
+                        .skip(2)
+                        .filter(|a| !a.starts_with('-'))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let draft = crate::github::parse_draft(&text)?;
+                    if no_publish {
+                        println!("title: {}", draft.title);
+                        println!("body:\n{}", draft.body);
+                        return Ok(0);
+                    }
+                    // Prefer the official gh CLI when installed.
+                    let gh = std::process::Command::new("gh")
+                        .arg("workflow")
+                        .arg("run")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    match gh {
+                        Ok(status) if status.success() => Ok(0),
+                        _ => {
+                            println!("title: {}", draft.title);
+                            println!("body:\n{}", draft.body);
+                            eprintln!("fxrs gh workflow: `gh workflow run` unavailable or failed; printed the draft above");
+                            Ok(1)
+                        }
+                    }
+                }
+                _ => bail!("usage: fxrs gh workflow draft <TEXT> | workflow publish [--no-publish] <TEXT>"),
+            }
+        }
+        _ => bail!("usage: fxrs gh snapshot | gh pr create <title>|<body> | gh issue create <title>|<body> | gh workflow draft | gh feedback"),
     }
 }
 
@@ -2773,7 +2868,7 @@ mod tests {
             eprintln!("fixture missing; skipping");
             return;
         }
-        let img = load_image_input(path).unwrap();
+        let img = load_image_input_pub(path).unwrap();
         assert_eq!(img.media_type, "image/png");
         assert!(!img.data_base64.is_empty());
         // round-trips to the original bytes
@@ -2786,12 +2881,12 @@ mod tests {
     fn image_input_rejects_bad_extension() {
         let path = Path::new("/tmp/fxrs-tiny.png.xxx");
         std::fs::write(path, "nope").unwrap();
-        assert!(load_image_input(path).is_err());
+        assert!(load_image_input_pub(path).is_err());
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn image_input_rejects_missing_file() {
-        assert!(load_image_input(Path::new("/tmp/definitely-missing-xyz.png")).is_err());
+        assert!(load_image_input_pub(Path::new("/tmp/definitely-missing-xyz.png")).is_err());
     }
 }
