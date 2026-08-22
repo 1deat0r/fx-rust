@@ -12,7 +12,7 @@
 |---|---|
 | Upstream | vercel-labs/fx @ v0.0.4 (`cbd5c2e`) |
 | Upstream size | 549 Zig files, ~688K LOC (devbox executor removed upstream before v0.0.5) |
-| Our size today | ~26.6K Rust LOC, 60 source files, 224 tests |
+| Our size today | ~25.7K Rust LOC, 60 source files, 228 tests |
 | Parity definition | Behavioral + surface 1:1: same CLI, tools, config, sessions, hooks, MCP, ACP, TUI, auth, usage reporting, SDK/bindings |
 
 ## Parity matrix
