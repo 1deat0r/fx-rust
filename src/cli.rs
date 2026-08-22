@@ -783,6 +783,22 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             println!("  tool calls: {}", totals.tool_calls);
             println!("  steps: {}", totals.steps);
             println!("  est. cost: ${:.4}", totals.cost_usd);
+            let recovery = crate::usage_recovery::collect_from_home_conservative();
+            if !recovery.pending.is_empty()
+                || !recovery.incidents.is_empty()
+                || recovery.unknown_pending
+            {
+                println!(
+                    "  recovery: {} unresolved session(s), {} incident(s){}",
+                    recovery.pending.len(),
+                    recovery.incidents.len(),
+                    if recovery.unknown_pending {
+                        " (some state unknown)"
+                    } else {
+                        ""
+                    }
+                );
+            }
             Ok(0)
         }
         Some("replay") => {
@@ -1126,6 +1142,27 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
             }
         }
         Err(e) => out.push(('w', format!("terminal store unreadable: {e:#}"))),
+    }
+
+    // 11. Usage recovery registry: unresolved usage markers left by crashes
+    //     after a session checkpoint but before the ledger append.
+    match crate::usage_recovery::list_recovery_sessions() {
+        Ok(marked) => {
+            if !marked.is_empty() {
+                let recovery = crate::usage_recovery::collect_from_home_conservative();
+                let mut msg = format!(
+                    "usage recovery: {} marked session(s), {} unresolved, {} incident(s)",
+                    marked.len(),
+                    recovery.pending.len(),
+                    recovery.incidents.len(),
+                );
+                if recovery.unknown_pending {
+                    msg.push_str(" (some state unknown)");
+                }
+                out.push(('w', msg));
+            }
+        }
+        Err(e) => out.push(('w', format!("usage recovery registry unreadable: {e:#}"))),
     }
 
     out

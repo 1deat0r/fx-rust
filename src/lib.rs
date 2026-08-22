@@ -41,6 +41,7 @@ pub mod tools;
 pub mod ui;
 mod upgrade;
 pub mod usage;
+pub mod usage_recovery;
 pub mod util;
 pub mod version;
 

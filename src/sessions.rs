@@ -132,6 +132,28 @@ impl SessionStore {
         })
     }
 
+    /// Find a session by id across all workspace dirs (used by usage
+    /// recovery, where the marker registry keys on session id only).
+    pub fn load_by_id(&self, id: &str) -> Result<Option<Session>> {
+        let mut found = None;
+        for dir in std::fs::read_dir(&self.root)? {
+            let dir = dir?;
+            if !dir.file_type()?.is_dir() {
+                continue;
+            }
+            let path = dir.path().join(format!("{id}.json"));
+            if path.exists() {
+                let data = std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                let sess = serde_json::from_str(&data)
+                    .with_context(|| format!("parsing {}", path.display()))?;
+                found = Some(sess);
+                break;
+            }
+        }
+        Ok(found)
+    }
+
     pub fn save(&self, sess: &Session) -> Result<()> {
         let mut sess = sess.clone();
         self.migrate(&mut sess);

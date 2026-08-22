@@ -675,6 +675,7 @@ pub async fn run(
         if let Err(e) = store.save(&sess) {
             eprintln!("[fxrs] session save failed: {e:#}");
         }
+        usage_recovery_checkpoint(&session_id, &sess);
     }
 
     let sess = Session {
@@ -700,6 +701,7 @@ pub async fn run(
     if let Err(e) = store.save(&sess) {
         eprintln!("[fxrs] session save failed: {e:#}");
     }
+    usage_recovery_checkpoint(&session_id, &sess);
 
     // Usage sidecar: one record per turn (~/.fx/usage.jsonl).
     {
@@ -856,4 +858,25 @@ fn parse_retry_after(msg: &str) -> Option<u64> {
     rest.parse::<u64>()
         .ok()
         .filter(|&v| v <= crate::model_response_recovery::MAX_RETRY_AFTER_SECONDS)
+}
+
+/// Usage-recovery checkpoint (upstream session_store.zig): after writing a
+/// session checkpoint that carries usage the durable ledger may not yet
+/// cover, record a `usage_recovery` marker; once the ledger covers the
+/// session's claimed totals, clear it. A crash in the window between the
+/// checkpoint and the ledger append leaves the marker so the next run's
+/// `fxrs usage` / `fxrs doctor` can surface the unresolved state.
+fn usage_recovery_checkpoint(session_id: &str, sess: &crate::sessions::Session) {
+    let ledger = crate::usage::UsageStore::new();
+    let ledger_tokens: u64 = ledger
+        .read_all()
+        .into_iter()
+        .filter(|r| r.session_id == session_id)
+        .map(|r| r.total_tokens)
+        .sum();
+    if crate::usage_recovery::needs_recovery(sess, ledger_tokens) {
+        let _ = crate::usage_recovery::mark_pending(session_id, sess.updated_ms as i64);
+    } else {
+        let _ = crate::usage_recovery::clear_pending(session_id);
+    }
 }
