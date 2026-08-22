@@ -798,6 +798,10 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             );
             Ok(0)
         }
+        Some("skills") => {
+            let sub_args: Vec<String> = args.clone().cloned().collect();
+            return cmd_skills(&sub_args, &cwd()).await;
+        }
         Some("usage") => {
             let mut period = "7d";
             let wants_json = args.clone().any(|a| a == "--json");
@@ -2348,5 +2352,38 @@ async fn run_gh(args: &[String]) -> Result<i32> {
             Ok(0)
         }
         _ => bail!("usage: fxrs gh snapshot | gh pr create <title>|<body> | gh issue create <title>|<body> | gh feedback"),
+    }
+}
+
+// ------------------------------------------------------------------ skills
+
+/// `fxrs skills [list|show|add|install|create|remove|path] ...` — the
+/// `/skills` command harness surface (`core/skills/skill_commands.zig` +
+/// `builtins/skills.zig`).
+async fn cmd_skills(args: &[String], workspace: &Path) -> Result<i32> {
+    let wants_json = args.iter().any(|a| a == "--json");
+    let rest: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(|a| a.as_str())
+        .collect();
+    let line = rest.join(" ");
+
+    let command = crate::skills::commands::parse_command(&line);
+    if wants_json && matches!(command, crate::skills::commands::Command::List) {
+        let catalog = crate::skills::discover(workspace);
+        println!("{}", serde_json::to_string_pretty(&crate::skills::catalog_summary(&catalog))?);
+        return Ok(0);
+    }
+
+    match crate::skills::commands::execute_command(workspace, &command) {
+        Ok(result) => {
+            println!("{}", result.render());
+            Ok(0)
+        }
+        Err(e) => {
+            eprintln!("fxrs skills: {e:#}");
+            Ok(1)
+        }
     }
 }

@@ -520,8 +520,21 @@ pub async fn run_interactive(
                         ),
                     }
                 }
-                Slash::Compact => println!("(not ready: context compaction is a later phase)"),
-                Slash::Login => println!("(not ready: OAuth login is a later phase)"),
+                Slash::Skills(arg) => {
+                    let line = arg.unwrap_or_default();
+                    let command = crate::skills::commands::parse_command(&line);
+                    match crate::skills::commands::execute_command(&config.workspace, &command) {
+                        Ok(result) => {
+                            print!("{}", result.render());
+                            if !result.render().ends_with('\n') {
+                                println!();
+                            }
+                        }
+                        Err(e) => println!("fxrs skills: {e:#}"),
+                    }
+                    continue;
+                }
+                Slash::Compact => println!("(not ready: context compaction is a later phase)"),                Slash::Login => println!("(not ready: OAuth login is a later phase)"),
                 Slash::Logout => println!("(not ready: OAuth logout is a later phase)"),
                 Slash::Unknown(name) => {
                     println!("unknown slash command `/{name}` — try /help");

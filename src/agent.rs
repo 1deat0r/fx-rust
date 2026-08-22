@@ -116,6 +116,19 @@ pub async fn run(
         system_base.push_str(&crate::model_catalog::render_prompt_section(&mcp_discovery));
     }
 
+    // Skills: advertise the discovered `<available_skills>` catalog so the
+    // model can load a skill when a task matches its description
+    // (core/skills/skill_runtime built prompt section).
+    let skill_catalog = crate::skills::discover(&config.workspace);
+    if !skill_catalog.skills.is_empty() {
+        let (section, _notice) = crate::skills::build_prompt_section(
+            &skill_catalog.skills,
+            crate::skills::SKILL_DESCRIPTION_BYTES_DEFAULT,
+            crate::skills::SKILL_CATALOG_BYTES_DEFAULT,
+        );
+        system_base.push_str(&section);
+    }
+
     // Prompt history: append user prompts to ~/.fx/history.jsonl.
     if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
         let _ =

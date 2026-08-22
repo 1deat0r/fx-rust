@@ -37,6 +37,7 @@ pub mod permissions;
 pub mod providers;
 pub mod result_store;
 pub mod sessions;
+pub mod skills;
 pub mod settings_catalog;
 pub mod shell_command;
 pub mod slash_commands;

@@ -1,120 +1,88 @@
-//! Skill tool: list installed skills and read SKILL.md documents.
-//! Skills live in ~/.fx/skills/<name>/SKILL.md and
-//! <workspace>/.fx/skills/<name>/SKILL.md.
+//! Skill tool: list installed skills and read SKILL.md documents, backed by
+//! the ported skills subsystem (`core/skills/*` — contract parsing,
+//! multi-root discovery, catalog). Faithful to fx's
+//! `tools/skills/skill.zig` + `tools/skills/install_skill.zig` surface.
 
-use std::fs;
-
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{arg, ToolContext};
+use crate::skills::{Registry, managed_root, read_skill_md, SKILL_FILE_BYTES_DEFAULT};
 
+/// `skill` tool: list the catalog, or read a skill (optionally a resource).
 pub fn skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let action = arg(args, "action").unwrap_or("list");
     match action {
         "list" => {
-            let mut skills = Vec::new();
-            for dir in skill_dirs(ctx) {
-                if !dir.is_dir() {
-                    continue;
-                }
-                let Ok(entries) = fs::read_dir(&dir) else {
-                    continue;
-                };
-                for entry in entries.flatten() {
-                    if !entry.path().is_dir() {
-                        continue;
-                    }
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let skill_md = entry.path().join("SKILL.md");
-                    let description = fs::read_to_string(&skill_md)
-                        .ok()
-                        .and_then(|t| extract_description(&t))
-                        .unwrap_or_default();
-                    skills.push(json!({ "name": name, "description": description }));
-                }
-            }
+            let registry = Registry::discover(&ctx.workspace);
+            let mut skills: Vec<Value> = registry
+                .catalog()
+                .skills
+                .iter()
+                .map(|s| {
+                    json!({
+                        "name": s.name,
+                        "description": s.description,
+                        "path": s.path.display().to_string(),
+                        "source": s.source.label(),
+                        "managed_install": s.managed_install,
+                    })
+                })
+                .collect();
             skills.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
             Ok(json!({ "skills": skills }))
         }
         "read" => {
             let name = arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing `name`"))?;
-            for dir in skill_dirs(ctx) {
-                let p = dir.join(name).join("SKILL.md");
-                if p.is_file() {
-                    let text = fs::read_to_string(&p)
-                        .with_context(|| format!("reading {}", p.display()))?;
-                    return Ok(json!({
-                        "name": name,
-                        "content": ctx.truncate(&text),
-                        "path": p.display().to_string(),
-                    }));
+            let registry = Registry::discover(&ctx.workspace);
+            let skill = registry
+                .find(name)
+                .ok_or_else(|| anyhow::anyhow!("skill `{name}` not found"))?;
+            let resource = arg(args, "resource");
+            let text = match resource {
+                Some(res) => {
+                    let data =
+                        crate::skills::open_resource(&skill.path, res, SKILL_FILE_BYTES_DEFAULT)
+                            .map_err(|e| anyhow!("skill `{name}`: {e}"))?;
+                    String::from_utf8_lossy(&data).into_owned()
                 }
-            }
-            bail!("skill `{name}` not found in ~/.fx/skills or <workspace>/.fx/skills")
+                None => read_skill_md(&skill.path, SKILL_FILE_BYTES_DEFAULT)
+                    .map_err(|e| anyhow!("skill `{name}`: {e}"))?,
+            };
+            Ok(json!({
+                "name": skill.name,
+                "description": skill.description,
+                "content": ctx.truncate(&text),
+                "path": skill.path.display().to_string(),
+                "source": skill.source.label(),
+            }))
         }
         other => bail!("unknown skill action: {other}"),
     }
 }
 
+/// `install_skill` tool: install from a local directory into the managed
+/// root (`~/.fx/skills`), optionally filtered to one skill.
 pub fn install_skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let source = arg(args, "source").ok_or_else(|| anyhow::anyhow!("missing `source`"))?;
     let src = ctx.resolve(source);
-    if !src.join("SKILL.md").is_file() {
+    if !src.join("SKILL.md").is_file() && !src.is_dir() {
         bail!(
             "source must be a directory containing SKILL.md: {}",
             src.display()
         );
     }
-    let name = arg(args, "name").map(|n| n.to_string()).unwrap_or_else(|| {
-        src.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "skill".into())
-    });
-    let dest = ctx.workspace.join(".fx").join("skills").join(&name);
-    fs::create_dir_all(&dest).with_context(|| format!("creating {}", dest.display()))?;
-    copy_dir(&src, &dest)?;
+    let filter = arg(args, "skill").map(|s| s.to_string());
+    let skills_dir = managed_root();
+    let registry = Registry::discover(&ctx.workspace);
+    let names =
+        crate::skills::commands::install_from_source(&skills_dir, &ctx.workspace, &registry, &src.display().to_string(), filter.as_deref())?;
+    if names.is_empty() {
+        bail!("install_skill: no skills found in {}", src.display());
+    }
     Ok(json!({
         "result": "ok",
-        "name": name,
-        "path": dest.display().to_string(),
+        "installed": names,
+        "path": skills_dir.display().to_string(),
     }))
-}
-
-fn skill_dirs(ctx: &ToolContext) -> Vec<std::path::PathBuf> {
-    vec![
-        crate::config::fx_home().join("skills"),
-        ctx.workspace.join(".fx").join("skills"),
-    ]
-}
-
-fn extract_description(text: &str) -> Option<String> {
-    let front = text.lines().take(15).collect::<Vec<_>>().join("\n");
-    let desc_start = front.find("description:")?;
-    let after = &front[desc_start + "description:".len()..];
-    let desc = after
-        .lines()
-        .next()?
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'');
-    if desc.is_empty() {
-        None
-    } else {
-        Some(desc.to_string())
-    }
-}
-
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            fs::create_dir_all(&target)?;
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
 }
