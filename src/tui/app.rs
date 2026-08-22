@@ -136,6 +136,7 @@ pub struct App {
     settings_scroll: usize,
     help_scroll: usize,
     spin_frame: usize,
+    run_had_error: bool,
 }
 
 impl App {
@@ -182,6 +183,7 @@ impl App {
             settings_scroll: 0,
             help_scroll: 0,
             spin_frame: 0,
+            run_had_error: false,
         };
         app.init_banner(resume)?;
         Ok(app)
@@ -320,6 +322,7 @@ impl App {
     // ---------------- agent execution
 
     fn spawn_agent(&mut self, req: AgentRequest) {
+        self.run_had_error = false;
         let (tx, rx) = mpsc::channel::<Ev>();
         let human = TuiHuman::new(tx);
         let config = self.config.clone();
@@ -877,6 +880,17 @@ impl App {
                     "run `fxrs logout` outside the TUI".to_string(),
                 );
             }
+            Slash::Sound(arg) => {
+                let rest: Vec<String> = arg.iter().cloned().collect();
+                let r = crate::cli::run_sound(&rest);
+                match r {
+                    Ok(_) if rest.is_empty() || rest[0] == "status" => {}
+                    Ok(_) => self
+                        .transcript
+                        .push(LineKind::System, format!("sound: {}", rest.join(" "))),
+                    Err(e) => self.transcript.push(LineKind::Error, format!("{e:#}")),
+                }
+            }
             Slash::Credits => {
                 self.transcript.push(
                     LineKind::System,
@@ -1019,6 +1033,30 @@ impl App {
         self.mode = Mode::Skills;
     }
 
+    /// Play attention-required cues if enabled by sound preferences.
+    fn play_attention(&self) {
+        let prefs = crate::notifications::load_preferences();
+        if !prefs.attention_required {
+            return;
+        }
+        let player = crate::notifications::make_player();
+        player.play_attention(crate::notifications::Cue::Bloom);
+    }
+
+    /// Play the turn-end cue (success/error) if enabled by preferences.
+    fn play_turn_end(&self, failed: bool) {
+        let prefs = crate::notifications::load_preferences();
+        if !prefs.turn_end {
+            return;
+        }
+        let player = crate::notifications::make_player();
+        player.play(if failed {
+            crate::notifications::Cue::Error
+        } else {
+            crate::notifications::Cue::Success
+        });
+    }
+
     fn answer_approval(&mut self, allow: bool) {
         if let Some(tx) = self.pending_approval.take() {
             let _ = tx.send(allow);
@@ -1114,18 +1152,22 @@ impl App {
                 self.transcript.push(LineKind::System, text);
             }
             Ev::Error(e) => {
+                self.run_had_error = true;
                 self.transcript
                     .push(LineKind::Error, format!("ƒx error: {e}"));
             }
             Ev::Done => {
+                let had_error = self.run_had_error;
                 self.running = None;
                 self.agent_rx = None;
                 self.transcript.push(LineKind::System, "─".repeat(30));
+                self.play_turn_end(had_error);
             }
             Ev::Approve(req, answer_tx) => {
                 self.pending_approval = Some(answer_tx);
                 self.approval_req = Some(req);
                 self.mode = Mode::Approval;
+                self.play_attention();
             }
         }
     }

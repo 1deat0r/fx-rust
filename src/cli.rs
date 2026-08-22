@@ -931,6 +931,10 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let wants_json = args.clone().any(|a| a == "--json");
             run_credits(wants_json).await
         }
+        Some("sound") | Some("notify") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            run_sound(&rest)
+        }
         Some("provider") => {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
             return run_provider(&rest).await;
@@ -2737,6 +2741,63 @@ async fn run_issue_command(args: &[String]) -> Result<i32> {
 
 /// `fxrs credits|balance [--json]` — upstream `credits` top-level command:
 /// show the AI Gateway credit balance.
+/// `fxrs sound [on|off|status]` — notification preferences for the
+/// notifications/sounds subsystem. Preferences persist to `~/.fx/sound.json`.
+pub fn run_sound(args: &[String]) -> Result<i32> {
+    use crate::notifications::{default_preferences, Preferences};
+    let store_path = crate::config::fx_home().join("sound.json");
+    let load = || -> Preferences {
+        std::fs::read_to_string(&store_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Preferences>(&s).ok())
+            .unwrap_or_else(default_preferences)
+    };
+    let save = |p: Preferences| {
+        if let Some(dir) = store_path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&store_path, serde_json::to_string_pretty(&p)?);
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let action = args.first().map(|s| s.as_str()).unwrap_or("status");
+    let mut prefs = load();
+    match action {
+        "on" => {
+            prefs.turn_end = true;
+            prefs.attention_required = true;
+            save(prefs)?;
+            println!("sound: on (turn_end + attention_required)");
+        }
+        "off" => {
+            prefs = Preferences::default();
+            save(prefs)?;
+            println!("sound: off");
+        }
+        "attention" | "attention-only" => {
+            prefs.attention_required = true;
+            prefs.turn_end = false;
+            save(prefs)?;
+            println!("sound: attention-required only");
+        }
+        "status" | "" => {
+            println!(
+                "sound: turn_end={} attention_required={} max={}",
+                prefs.turn_end, prefs.attention_required, prefs.max
+            );
+            println!(
+                "defaults: {}",
+                serde_json::to_string(&default_preferences())?
+            );
+        }
+        other => {
+            eprintln!("fxrs sound: unknown action `{other}` (on|off|attention|status)");
+            return Ok(2);
+        }
+    }
+    Ok(0)
+}
+
 async fn run_credits(wants_json: bool) -> Result<i32> {
     let store = crate::auth::load()?;
     let (key, _base) = crate::auth::resolve_key("gateway", &store);

@@ -35,6 +35,7 @@ pub mod model_catalog;
 pub mod model_response_recovery;
 pub mod modes;
 pub mod mods;
+pub mod notifications;
 pub mod oneoff;
 pub mod operation_id;
 pub mod permissions;

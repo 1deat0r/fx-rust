@@ -30,6 +30,7 @@ pub enum Slash {
     Logout(Option<String>),
     Credits,
     Stats,
+    Sound(Option<String>),
     /// Unknown / unimplemented slash command (kept so the shell can explain).
     Unknown(String),
 }
@@ -277,6 +278,7 @@ pub fn parse(line: &str) -> Option<Slash> {
         "logout" => Slash::Logout(arg.clone()),
         "credits" => Slash::Credits,
         "stats" => Slash::Stats,
+        "sound" => Slash::Sound(arg.clone()),
         other => Slash::Unknown(other.to_string()),
     };
     for spec in catalog() {

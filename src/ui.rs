@@ -621,6 +621,20 @@ pub async fn run_interactive(
                     }
                     continue;
                 }
+                Slash::Sound(arg) => {
+                    let rest: Vec<String> = arg.iter().cloned().collect();
+                    let cmd = format!("fxrs sound {}", rest.join(" "));
+                    match crate::cli::run_sound(&rest) {
+                        Ok(_) => {
+                            if rest.is_empty() || rest[0] == "status" {
+                                // status already printed
+                            }
+                        }
+                        Err(e) => println!("sound error: {e:#}"),
+                    }
+                    let _ = cmd;
+                    continue;
+                }
                 Slash::Credits => {
                     let store = match crate::auth::load() {
                         Ok(s) => s,
