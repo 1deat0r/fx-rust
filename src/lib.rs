@@ -35,6 +35,7 @@ pub mod slash_commands;
 pub mod tape;
 pub mod terminal;
 pub mod terminal_recovery;
+pub mod terminal_takeover;
 pub mod tool_prep;
 pub mod tools;
 pub mod ui;
