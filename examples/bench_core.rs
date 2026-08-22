@@ -10,14 +10,14 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-fn bench<F: FnMut()>(name: &str, iters: usize, mut f: F) {
+fn bench<F: FnMut() -> u64>(name: &str, iters: usize, mut f: F) {
     // Warm up.
     for _ in 0..iters.min(20) {
-        black_box(f());
+        std::hint::black_box(f());
     }
     let start = Instant::now();
     for _ in 0..iters {
-        black_box(f());
+        std::hint::black_box(f());
     }
     let elapsed = start.elapsed();
     let per = elapsed.as_nanos() / iters as u128;
@@ -44,13 +44,13 @@ fn main() {
         .collect::<Vec<_>>()
         .join("\n");
     bench("diff::compute (200 ln)", 2000, move || {
-        black_box(fxrs::diff::compute(&old_text, &new_text));
+        black_box(fxrs::diff::compute(&old_text, &new_text)).len() as u64
     });
 
     // 2) Shell-command lexer on a representative command.
     let cmd = "cd src && cargo build --release -j 8 > /tmp/log 2>&1 && echo done";
     bench("shell_command::classify", 50_000, move || {
-        black_box(fxrs::shell_command::classify(cmd));
+        black_box(fxrs::shell_command::classify(cmd)).writes as u64
     });
 
     // 3) Transcript wrapping of a 4 KiB paragraph at 100 columns.
@@ -60,13 +60,14 @@ fn main() {
             fxrs::tui::transcript::LineKind::User,
             para.clone(),
             100,
-        ));
+        ))
+        .rows as u64
     });
 
     // 4) Settings render.
     let cfg = fxrs::config::resolve(std::path::Path::new(".")).expect("resolve cwd config");
     bench("settings_catalog::render", 20_000, move || {
-        black_box(fxrs::settings_catalog::render(&cfg));
+        black_box(fxrs::settings_catalog::render(&cfg)).len() as u64
     });
 
     // 5) MCP json-schema validation (simple object schema).
@@ -74,13 +75,15 @@ fn main() {
     let schema: serde_json::Value = serde_json::from_str(schema_json).unwrap();
     let args = serde_json::json!({"command":"ls -la","timeoutMs":5000});
     bench("mcp_schema validate object", 100_000, move || {
-        black_box(fxrs::mcp_schema::validate(&schema, &args));
+        black_box(fxrs::mcp_schema::validate(&schema, &args))
+            .ok()
+            .is_some() as u64
     });
 
     // 6) Operation-id / subagent control-record round trip.
     let invocation = "fxop-8a3f2c1e-0000-4000-8000-000000000000";
     bench("operation_id generate", 500_000, move || {
-        black_box(fxrs::operation_id::operation_id(invocation));
+        black_box(fxrs::operation_id::operation_id(invocation)).len() as u64
     });
 
     // 7) Approval auto-classify sandbox (permission fast path).
@@ -90,6 +93,6 @@ fn main() {
         additional: Vec::new(),
     };
     bench("permissions sandbox allows tmp", 200_000, move || {
-        black_box(sandbox.allows("/tmp/x.txt"));
+        black_box(sandbox.allows("/tmp/x.txt")) as u64
     });
 }
