@@ -122,9 +122,11 @@ mod tests {
 
     #[test]
     fn env_overrides() {
+        let _g = crate::test_env::lock().lock().unwrap();
         std::env::set_var("FX_CONTEXT_LIMIT", "100000");
         let l = ContextLimits::from_env();
         assert_eq!(l.max_tokens, 100000);
         std::env::remove_var("FX_CONTEXT_LIMIT");
+        drop(_g);
     }
 }

@@ -43,3 +43,23 @@ pub mod util;
 pub mod version;
 
 pub use version::VERSION;
+
+/// Test-only helper: a process-wide mutex serializing tests that mutate
+/// environment variables. Rust runs tests concurrently, and env vars are
+/// process-global, so without this guard a reader test can observe a
+/// writer test's temporary value (e.g. `FX_HOME` or `FX_ALLOW_LOCAL_URLS`).
+#[cfg(test)]
+pub mod test_env {
+    use std::sync::{Mutex, OnceLock};
+
+    pub fn lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    /// Run `f` while holding the env guard.
+    pub fn with<R>(f: impl FnOnce() -> R) -> R {
+        let _guard = lock().lock().unwrap();
+        f()
+    }
+}

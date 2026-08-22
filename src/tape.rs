@@ -106,37 +106,39 @@ mod tests {
 
     #[test]
     fn tape_roundtrip_via_fx_home() {
-        let home = std::env::temp_dir().join(format!("fxrs-tape-{}", std::process::id()));
-        std::env::set_var("FX_HOME", &home);
-        let _ = std::fs::remove_dir_all(&home);
-        let ws = Path::new("/tmp/fxrs-tape-ws");
-        let store = TapeStore::for_session(ws, "tape-1");
-        store.record(
-            &TapeEntry {
-                ts_ms: now(),
-                tool: "run_command".into(),
-                target: "cargo test".into(),
-                ok: true,
-                preview: "ok. 3 passed".into(),
-            },
-            "tape-1",
-        );
-        store.record(
-            &TapeEntry {
-                ts_ms: now(),
-                tool: "write_file".into(),
-                target: "/tmp/fxrs-tape-ws/a.rs".into(),
-                ok: false,
-                preview: "error: denied".into(),
-            },
-            "tape-1",
-        );
-        let tape = store.read("tape-1");
-        assert_eq!(tape.len(), 2);
-        assert_eq!(tape[0].tool, "run_command");
-        assert!(tape[0].ok);
-        assert!(!tape[1].ok);
-        std::env::remove_var("FX_HOME");
-        let _ = std::fs::remove_dir_all(&home);
+        crate::test_env::with(|| {
+            let home = std::env::temp_dir().join(format!("fxrs-tape-{}", std::process::id()));
+            std::env::set_var("FX_HOME", &home);
+            let _ = std::fs::remove_dir_all(&home);
+            let ws = Path::new("/tmp/fxrs-tape-ws");
+            let store = TapeStore::for_session(ws, "tape-1");
+            store.record(
+                &TapeEntry {
+                    ts_ms: now(),
+                    tool: "run_command".into(),
+                    target: "cargo test".into(),
+                    ok: true,
+                    preview: "ok. 3 passed".into(),
+                },
+                "tape-1",
+            );
+            store.record(
+                &TapeEntry {
+                    ts_ms: now(),
+                    tool: "write_file".into(),
+                    target: "/tmp/fxrs-tape-ws/a.rs".into(),
+                    ok: false,
+                    preview: "error: denied".into(),
+                },
+                "tape-1",
+            );
+            let tape = store.read("tape-1");
+            assert_eq!(tape.len(), 2);
+            assert_eq!(tape[0].tool, "run_command");
+            assert!(tape[0].ok);
+            assert!(!tape[1].ok);
+            std::env::remove_var("FX_HOME");
+            let _ = std::fs::remove_dir_all(&home);
+        });
     }
 }

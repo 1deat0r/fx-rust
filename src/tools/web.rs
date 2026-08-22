@@ -338,6 +338,14 @@ fn strip_tags(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Serializes the `FX_ALLOW_LOCAL_URLS` env tests: the variable is
+    /// process-wide, so concurrent mutation/read races across tests.
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn has(url: &str) -> bool {
         valid_url(url).is_ok()
@@ -354,6 +362,7 @@ mod tests {
 
     #[test]
     fn url_policy_blocks_local_and_private() {
+        let _guard = env_lock().lock().unwrap();
         assert!(!has("http://localhost:8080"));
         assert!(!has("http://127.0.0.1/x"));
         assert!(!has("http://192.168.1.1"));
@@ -365,6 +374,7 @@ mod tests {
 
     #[test]
     fn url_policy_allow_local_env_override() {
+        let _guard = env_lock().lock().unwrap();
         std::env::set_var("FX_ALLOW_LOCAL_URLS", "1");
         assert!(has("http://localhost:8080"));
         std::env::remove_var("FX_ALLOW_LOCAL_URLS");

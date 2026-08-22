@@ -199,10 +199,12 @@ mod tests {
                 ..Default::default()
             },
         );
+        let _g = crate::test_env::lock().lock().unwrap();
         unsafe { std::env::set_var("ANTHROPIC_API_KEY", "env") };
         let (key, _) = resolve_key("anthropic", &store);
         assert_eq!(key.as_deref(), Some("env"));
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+        drop(_g);
         let (key, _) = resolve_key("anthropic", &store);
         assert_eq!(key.as_deref(), Some("stored"));
     }

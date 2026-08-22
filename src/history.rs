@@ -132,40 +132,43 @@ impl HistoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::with;
 
     fn store(tag: &str) -> HistoryStore {
         let home = std::env::temp_dir().join(format!("fxrs-hist-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         std::env::set_var("FX_HOME", &home);
-        let s = HistoryStore::new();
-        let _ = home;
-        s
+        HistoryStore::new()
     }
 
     #[test]
     fn record_and_query() {
-        let s = store("rq");
-        s.record("/ws", "hello world").unwrap();
-        s.record("/ws", "how are you").unwrap();
-        let all = s.query(None, 10);
-        assert_eq!(all.len(), 2);
-        let found = s.query(Some("hello"), 10);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].text, "hello world");
-        std::env::remove_var("FX_HOME");
+        with(|| {
+            let s = store("rq");
+            s.record("/ws", "hello world").unwrap();
+            s.record("/ws", "how are you").unwrap();
+            let all = s.query(None, 10);
+            assert_eq!(all.len(), 2);
+            let found = s.query(Some("hello"), 10);
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].text, "hello world");
+            std::env::remove_var("FX_HOME");
+        });
     }
 
     #[test]
     fn compaction_keeps_most_recent() {
-        let s = store("cmp");
-        for i in 0..1050 {
-            s.record("/ws", &format!("prompt {i}")).unwrap();
-        }
-        let recs = s.read();
-        assert!(recs.len() <= COMPACTION_RECORD_LIMIT, "got {}", recs.len());
-        // The most recent prompt survives.
-        assert!(recs.iter().any(|r| r.text == "prompt 1049"));
-        std::env::remove_var("FX_HOME");
+        with(|| {
+            let s = store("cmp");
+            for i in 0..1050 {
+                s.record("/ws", &format!("prompt {i}")).unwrap();
+            }
+            let recs = s.read();
+            assert!(recs.len() <= COMPACTION_RECORD_LIMIT, "got {}", recs.len());
+            // The most recent prompt survives.
+            assert!(recs.iter().any(|r| r.text == "prompt 1049"));
+            std::env::remove_var("FX_HOME");
+        });
     }
 }

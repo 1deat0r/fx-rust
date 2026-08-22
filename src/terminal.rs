@@ -1266,16 +1266,22 @@ mod tests {
             80,
         )
         .unwrap();
+        // Exit is observed through `try_wait`, but the output arrives via an
+        // async reader thread; poll both so there is no race between the
+        // child exiting and the reader draining the master.
         let mut exit = None;
-        for _ in 0..200 {
-            exit = handle.try_exit();
-            if exit.is_some() {
+        let mut text = String::new();
+        for _ in 0..400 {
+            if exit.is_none() {
+                exit = handle.try_exit();
+            }
+            text = handle.read_text(10, 65536, false, false);
+            if exit.is_some() && text.contains("native-probe-ok") {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(exit.is_some(), "native child should exit");
-        let text = handle.read_text(10, 65536, false, false);
         assert!(
             text.contains("native-probe-ok"),
             "native output missing: {text:?}"

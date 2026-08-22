@@ -405,6 +405,7 @@ mod tests {
 
     #[test]
     fn provider_resolution_prefers_explicit() {
+        let _g = crate::test_env::lock().lock().unwrap();
         std::env::set_var("FX_PROVIDER", "openai");
         std::env::set_var("AI_BASE_URL", "http://localhost:11434/v1");
         let cfg = Config {
@@ -430,5 +431,6 @@ mod tests {
         assert_eq!(p.base_url.as_deref(), Some("http://localhost:11434/v1"));
         std::env::remove_var("FX_PROVIDER");
         std::env::remove_var("AI_BASE_URL");
+        drop(_g);
     }
 }
