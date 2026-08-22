@@ -52,7 +52,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Subsystem | Upstream refs | Notes |
 |---|---|---|
 | Full TUI | `src/ui/**` (~150 files) | render engine, transcript runtime, footer, input composer (26 files), help/full-transcript/settings/resume/models/skills screens, theme detection, resize |
-| Input composer | `core/input/*` | kill ring, undo, paste, selection, unicode text bounds, editor state |
+| Input composer | `core/input/*` | 🟡 **`src/input_composer.rs`** — **core ported**: text boundaries (char/word/paragraph/line edges, combining-mark display units), editor state (cursor/selection/insert/backspace/delete-forward/cut), undo/redo history (invalid-transition reset, insert coalescing), bounded kill ring (consecutive-kill coalescing + finish_kill + rotate); TUI paste/entity/picker coupling deferred to Phase 5 |
 | ACP (Agent Client Protocol) | `acp/*`, `core/cli/acp_runner.zig` | ✅ **`src/acp/` + `fxrs acp`** — newline-delimited JSON-RPC stdio server: `initialize` (protocol v1 + capabilities), `session/new` (configOptions/modes), `session/load`/`resume` (history replay notifications), `session/list`/`close`/`remove`, `session/prompt` (streams `session/update` agent_message_chunk/tool_call/tool_call_update via Human sink, returns stopReason; cooperative cancel via oneshot abort), `session/set_mode`, `session/set_config_option`, `session/cancel`; upstream ErrorCode table + event shapes; prompt/session test controls pending |
 | SDK + NAPI/WASM bindings | `napi_core_main.zig`, `wasm_core_main.zig`, `wasm_term_main.zig`, `sdk/**` | libfx JS, node bindings, term-demo, xterm adapter |
 | Auth/login | `core/auth/*`, `core/hosts/native_keychain.zig` | 🟡 API-key store + `fxrs auth`/`login` landed (P2); OAuth flow + keychain pending |

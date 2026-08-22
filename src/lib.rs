@@ -24,6 +24,7 @@ pub mod gateway;
 pub mod github;
 pub mod history;
 pub mod hooks;
+pub mod input_composer;
 pub mod mcp;
 pub mod mcp_schema;
 pub mod mcp_transport;
