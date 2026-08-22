@@ -17,6 +17,7 @@ pub mod auth;
 pub mod background;
 pub mod cli;
 pub mod config;
+pub mod diff;
 pub mod context;
 pub mod exec_memory;
 pub mod executor;

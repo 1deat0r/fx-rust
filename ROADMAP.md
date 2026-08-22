@@ -14,7 +14,7 @@
 | Upstream size | 549 Zig files, ~688K LOC (devbox executor removed upstream before v0.0.5) |
 | Our size today | ~33.7K Rust LOC, 83 source files (incl. tests), 317 tests |
 | Parity definition | Behavioral + surface 1:1: same CLI, tools, config, sessions, hooks, MCP, ACP, TUI, auth, usage reporting, SDK/bindings |
-| Latest | 2026-08-22: skills subsystem landed (`src/skills/`); background `stop` group-kill fix; CLI parity batch — `fxrs pr`/`issue`, `fxrs credits`/`balance` (gateway `/coding-agent/v1/credits`), `fxrs provider`, `fxrs session migrate|recover`, `fxrs sessions --all` |
+| Latest | 2026-08-22: skills subsystem landed (`src/skills/`); background `stop` group-kill fix; CLI parity batch — `fxrs pr`/`issue`, `fxrs credits`/`balance` (gateway `/coding-agent/v1/credits`), `fxrs provider`, `fxrs session migrate|recover`, `fxrs sessions --all`; **diff engine `src/diff.rs` + `fxrs diff`** |
 
 ## Parity matrix
 
@@ -70,7 +70,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Hooks full | `core/hooks/*` (6 files) | definitions, common, prompt, runtime, tool |
 | Skills full | `core/skills/*` (4 files), `ui/skills_screen.zig` | ✅ **`src/skills/`** — contract (SKILL.md frontmatter parser, block descriptions, byte bounds), runtime (multi-root discovery: 7 workspace roots at every ancestor below home + managed `~/.fx/skills` + 5 compat roots; catalog diagnostics; bounded `<available_skills>` prompt section), invocation (resolve_skill, load_by_identity, sigil + natural-language prompt matching, explicit prompt section), commands (`/skills` list/show/add/install/create/remove/path; local + GitHub install with filters; transactional stage+rename). Wired: `fxrs skills [--json]`, `/skills` slash, agent system prompt advertises + auto-loads matched skills, `skill`/`install_skill` tools rebuilt. screen/menu UI deferred to Phase 5 TUI |
 | Images commands | `core/images/*` (2 files) | attachment + commands |
-| Output/transcript presentation | `core/output/*` | diff, activity, transcript presentation/release, worker status |
+| Output/transcript presentation | `core/output/*` | 🟡 **`src/diff.rs`** — LCS line diff engine (compute/countStats/formatUnified with 2 context lines, 6-line cap + elisions, trailing-newline markers) + `fxrs diff <a> <b>`; activity, transcript presentation/release, worker status pending (TUI-bound) |
 | Workspace runtime | `core/workspace/*` (21 files) | file index, change tracker, grep, glob, path completion, access, menus, diagnostics, metrics, record tape |
 | Agent runtime full | `core/agent/*` | worker runtime, execution memory, question prompt/answer, tool preparation, presentation |
 | GitHub | `core/github/*` (3 files) | ✅ **`src/github.rs` + `fxrs gh`** — git snapshot (`branch/status/log/diff stats`, upstream text shape), draft parse (title = first line, body = rest), `gh` CLI publish (`pr create`/`issue create`, `--no-publish` dry-run), PR/issue prompt contracts (upstream section mandates, NotGitRepository guard), `fxrs gh feedback` (fx.sh endpoint) |

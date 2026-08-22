@@ -889,6 +889,10 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
             return run_provider(&rest).await;
         }
+        Some("diff") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            return run_diff(&rest).await;
+        }
         Some("skills") => {
             let sub_args: Vec<String> = args.clone().cloned().collect();
             return cmd_skills(&sub_args, &cwd()).await;
@@ -2642,6 +2646,35 @@ async fn run_provider(args: &[String]) -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+
+// ------------------------------------------------------------------ diff
+
+/// `fxrs diff <old-file> <new-file>` — unified line diff between two files
+/// (port of `core/output/diff.zig` compute + formatUnified).
+async fn run_diff(args: &[String]) -> Result<i32> {
+    let non_flags: Vec<&str> = args.iter().map(|s| s.as_str()).filter(|a| !a.starts_with('-')).collect();
+    if non_flags.len() != 2 || args.iter().any(|a| a == "--help" || a == "-h") {
+        bail!("usage: fxrs diff <old-file> <new-file>");
+    }
+    let old_path = std::path::Path::new(non_flags[0]);
+    let new_path = std::path::Path::new(non_flags[1]);
+    let old_text = std::fs::read_to_string(old_path)
+        .with_context(|| format!("reading {}", old_path.display()))?;
+    let new_text = std::fs::read_to_string(new_path)
+        .with_context(|| format!("reading {}", new_path.display()))?;
+    let diff = crate::diff::compute(&old_text, &new_text);
+    let stats = crate::diff::count_stats(&diff);
+    let rendered = crate::diff::format_unified(&diff, Some(new_path.display().to_string().as_str()));
+    print!("{rendered}");
+    eprintln!(
+        "{}: +{} -{}",
+        new_path.display(),
+        stats.additions,
+        stats.deletions
+    );
+    Ok(0)
 }
 
 
