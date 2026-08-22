@@ -211,6 +211,10 @@ impl AcpServer {
                     .create(workspace, false)
                     .context("creating session")?
                     .1;
+                // Persist the empty session immediately so `session/prompt`
+                // against a freshly created id works (the prompt runner
+                // reloads history from the store).
+                let _ = persist_empty_session(store, workspace, &id);
                 let cfg = crate::config::resolve(workspace)?;
                 let result = json!({
                     "sessionId": id,
@@ -451,20 +455,7 @@ impl AcpServer {
                 // history from the store).
                 match store.create(workspace, false) {
                     Ok((_messages, id, _grants)) => {
-                        let empty: crate::sessions::Session = crate::sessions::Session {
-                            schema_version: crate::sessions::SCHEMA_VERSION,
-                            id: id.clone(),
-                            workspace: workspace.display().to_string(),
-                            created_ms: crate::util::now_ms(),
-                            updated_ms: crate::util::now_ms(),
-                            model: String::new(),
-                            mode: crate::permissions::PermissionMode::Auto,
-                            interactive: false,
-                            messages: Vec::new(),
-                            grants: Default::default(),
-                            usage: Default::default(),
-                        };
-                        let _ = store.save(&empty);
+                        let _ = persist_empty_session(store, workspace, &id);
                         id
                     }
                     Err(_) => "cmd-1".to_string(),
@@ -558,6 +549,31 @@ impl AcpServer {
     }
 }
 
+/// Persist an empty session under `workspace` so a fresh ACP session id can
+/// be resumed by `session/prompt` (the agent runner loads history from the
+/// store). Returns the session for callers that need it.
+fn persist_empty_session(
+    store: &SessionStore,
+    workspace: &std::path::Path,
+    id: &str,
+) -> anyhow::Result<crate::sessions::Session> {
+    let empty: crate::sessions::Session = crate::sessions::Session {
+        schema_version: crate::sessions::SCHEMA_VERSION,
+        id: id.to_string(),
+        workspace: workspace.display().to_string(),
+        created_ms: crate::util::now_ms(),
+        updated_ms: crate::util::now_ms(),
+        model: String::new(),
+        mode: crate::permissions::PermissionMode::Auto,
+        interactive: false,
+        messages: Vec::new(),
+        grants: Default::default(),
+        usage: Default::default(),
+    };
+    store.save(&empty)?;
+    Ok(empty)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +611,49 @@ mod tests {
         assert!(text.contains("\"sessions\":[]"), "{text}");
         // session/prompt without prompt_text/command args -> invalid params.
         assert!(text.contains("requires prompt_text or command"), "{text}");
+        if let Some(h) = home_before {
+            std::env::set_var("FX_HOME", h);
+        } else {
+            std::env::remove_var("FX_HOME");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn session_new_persists_empty_session_on_disk() {
+        // Regression: session/new returned an id but never saved the session
+        // file, so a subsequent session/prompt against the fresh id failed
+        // with "no session <id> in workspace".
+        let mut server = AcpServer::new("0.1.0");
+        let dir = std::env::temp_dir().join(format!("fxrs-acp-persist-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home_before = std::env::var("FX_HOME").ok();
+        let home = dir.join("home");
+        std::env::set_var("FX_HOME", &home);
+
+        let input_text =
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/new\",\"params\":{}}\n";
+        let mut output: Vec<u8> = Vec::new();
+        server
+            .serve_reader(
+                std::io::Cursor::new(input_text.as_bytes()),
+                &mut output,
+                &dir,
+            )
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&output);
+        assert!(text.contains("\"sessionId\""), "{text}");
+
+        // Extract the id and assert a session file exists on disk.
+        let v: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        let sid = v["result"]["sessionId"].as_str().unwrap();
+        let store = SessionStore::new().unwrap();
+        let loaded = store.load(&dir, sid).unwrap();
+        assert!(
+            loaded.is_some(),
+            "session/new must persist an empty session file"
+        );
         if let Some(h) = home_before {
             std::env::set_var("FX_HOME", h);
         } else {

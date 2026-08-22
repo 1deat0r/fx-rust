@@ -12,9 +12,9 @@ pub mod invocation;
 
 pub use contract::{
     invalid_skill_name_cause, parse_skill_file, resolve_metadata, validate_managed_skill_name,
-    BlockDescription, BlockDescriptionStyle, InvalidMetadataCause, MetadataStatus,
-    ParsedSkillFile, RootPolicy, RootSpec, SkillMetadata, SkillMetadataResult, SkillSource,
-    FX_ROOT_POLICY, MAX_DESCRIPTION_BYTES, MAX_FRONTMATTER_BYTES, MAX_NAME_BYTES,
+    BlockDescription, BlockDescriptionStyle, InvalidMetadataCause, MetadataStatus, ParsedSkillFile,
+    RootPolicy, RootSpec, SkillMetadata, SkillMetadataResult, SkillSource, FX_ROOT_POLICY,
+    MAX_DESCRIPTION_BYTES, MAX_FRONTMATTER_BYTES, MAX_NAME_BYTES,
 };
 
 /// Defaults for the two skill context limits (upstream context_limits.zig).
@@ -291,7 +291,10 @@ pub fn build_prompt_section(
             truncation_notice = Some(format!(
                 "<context_limit name=\"skill_description_bytes\" action=\"truncated\" observed_bytes=\"{observed}\" effective_bytes=\"{desc_limit}\" />"
             ));
-            let mut truncated = String::from(&desc[..desc_limit]);
+            // Truncate on a UTF-8 boundary so multibyte descriptions never
+            // panic the prompt builder (descriptions are free-form text).
+            let cut = desc.floor_char_boundary(desc_limit);
+            let mut truncated = String::from(&desc[..cut]);
             truncated.push_str("[truncated]");
             desc = truncated;
         }
@@ -418,13 +421,20 @@ pub fn catalog_summary(catalog: &Catalog) -> serde_json::Value {
 /// Open a resource inside a skill directory (upstream `openResource`):
 /// relative paths only, no "." / ".." segments, symlinks not followed.
 /// Returns the (bounded) file bytes.
-pub fn open_resource(skill_dir: &Path, resource: &str, max_bytes: usize) -> anyhow::Result<Vec<u8>> {
+pub fn open_resource(
+    skill_dir: &Path,
+    resource: &str,
+    max_bytes: usize,
+) -> anyhow::Result<Vec<u8>> {
     use anyhow::{bail, Context};
     let trimmed = resource.trim_matches([' ', '\t', '\r', '\n']);
     if trimmed.is_empty() || Path::new(trimmed).is_absolute() {
         bail!("invalid skill resource path");
     }
-    let segments: Vec<&str> = trimmed.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let segments: Vec<&str> = trimmed
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .collect();
     if segments.is_empty() {
         bail!("invalid skill resource path");
     }
@@ -456,7 +466,10 @@ pub fn resource_is_skill_file(resource: &str) -> bool {
     if trimmed.is_empty() || Path::new(trimmed).is_absolute() {
         return false;
     }
-    let segments: Vec<&str> = trimmed.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let segments: Vec<&str> = trimmed
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .collect();
     segments.len() == 1 && segments[0] == "SKILL.md"
 }
 
@@ -477,7 +490,9 @@ impl Registry {
         let catalog = discover(workspace);
         let mut by_name = BTreeMap::new();
         for skill in &catalog.skills {
-            by_name.entry(skill.name.clone()).or_insert_with(|| skill.clone());
+            by_name
+                .entry(skill.name.clone())
+                .or_insert_with(|| skill.clone());
         }
         Registry { catalog, by_name }
     }
@@ -488,6 +503,28 @@ impl Registry {
 
     pub fn find(&self, name: &str) -> Option<&Skill> {
         self.by_name.get(name)
+    }
+}
+
+#[cfg(test)]
+mod tests_utf8_safe {
+    use super::*;
+
+    #[test]
+    fn prompt_section_truncates_multibyte_description_without_panicking() {
+        let desc_wide: String = "はじめまして".repeat(40);
+        assert!(desc_wide.len() > 64);
+        let sk = Skill {
+            name: "cjk".to_string(),
+            description: desc_wide.clone(),
+            path: std::path::PathBuf::from("/tmp/skills/cjk"),
+            source: crate::skills::contract::SkillSource::GlobalFx,
+            managed_install: true,
+        };
+        let (text, notice) = build_prompt_section(&[sk], 64, 4096);
+        assert!(text.contains("<name>cjk</name>"));
+        assert!(text.contains("[truncated]"));
+        assert!(notice.is_some());
     }
 }
 
@@ -519,11 +556,20 @@ mod tests {
     #[test]
     fn discovers_workspace_managed_and_compat_roots() {
         let root = temp_dir("discover");
-        write(&root.join(".fx/skills/a/SKILL.md"), "---\nname: a-skill\ndescription: The A skill.\n---\nBody\n");
+        write(
+            &root.join(".fx/skills/a/SKILL.md"),
+            "---\nname: a-skill\ndescription: The A skill.\n---\nBody\n",
+        );
         write(&root.join(".fx/skills/b/SKILL.md"), "# Legacy\n");
-        write(&root.join("skills/shared-one/SKILL.md"), "---\nname: shared-one\ndescription: Shared skill\n---\nBody\n");
+        write(
+            &root.join("skills/shared-one/SKILL.md"),
+            "---\nname: shared-one\ndescription: Shared skill\n---\nBody\n",
+        );
         // compatibility root
-        write(&root.join(".claude/skills/claude-one/SKILL.md"), "---\nname: claude-one\ndescription: For claude\n---\nBody\n");
+        write(
+            &root.join(".claude/skills/claude-one/SKILL.md"),
+            "---\nname: claude-one\ndescription: For claude\n---\nBody\n",
+        );
 
         let catalog = discover(&root);
         let names: Vec<&str> = catalog.skills.iter().map(|s| s.name.as_str()).collect();
@@ -533,7 +579,10 @@ mod tests {
         assert!(names.contains(&"claude-one"), "{names:?}");
         let a = catalog.find("a-skill").unwrap();
         assert_eq!(a.description, "The A skill.");
-        assert!(!a.managed_install, "workspace .fx/skills is a workspace root, not the managed install root");
+        assert!(
+            !a.managed_install,
+            "workspace .fx/skills is a workspace root, not the managed install root"
+        );
 
         // cleanup
         let _ = std::fs::remove_dir_all(&root);
@@ -542,8 +591,14 @@ mod tests {
     #[test]
     fn discover_reports_invalid_metadata_diagnostics() {
         let root = temp_dir("diag");
-        write(&root.join(".fx/skills/bad/SKILL.md"), "---\nname: bad\n  continued\ndescription: x\n---\n");
-        write(&root.join(".fx/skills/good/SKILL.md"), "---\nname: good\ndescription: ok\n---\n");
+        write(
+            &root.join(".fx/skills/bad/SKILL.md"),
+            "---\nname: bad\n  continued\ndescription: x\n---\n",
+        );
+        write(
+            &root.join(".fx/skills/good/SKILL.md"),
+            "---\nname: good\ndescription: ok\n---\n",
+        );
         let catalog = discover(&root);
         assert!(catalog.find("good").is_some());
         assert!(catalog.find("bad").is_none());
@@ -552,7 +607,9 @@ mod tests {
                 d.path.ends_with("bad")
                     && matches!(
                         &d.cause,
-                        SkillDiagnosticCause::InvalidMetadata(InvalidMetadataCause::UnsupportedMultiline)
+                        SkillDiagnosticCause::InvalidMetadata(
+                            InvalidMetadataCause::UnsupportedMultiline
+                        )
                     )
             }),
             "diagnostics: {:?}",
@@ -564,8 +621,14 @@ mod tests {
     #[test]
     fn precedence_first_root_wins() {
         let root = temp_dir("precedence");
-        write(&root.join(".fx/skills/dup/SKILL.md"), "---\nname: dup\ndescription: workspace version\n---\n");
-        write(&root.join("skills/dup/SKILL.md"), "---\nname: dup\ndescription: shared version\n---\n");
+        write(
+            &root.join(".fx/skills/dup/SKILL.md"),
+            "---\nname: dup\ndescription: workspace version\n---\n",
+        );
+        write(
+            &root.join("skills/dup/SKILL.md"),
+            "---\nname: dup\ndescription: shared version\n---\n",
+        );
         let catalog = discover(&root);
         let skills: Vec<&Skill> = catalog.skills.iter().filter(|s| s.name == "dup").collect();
         assert_eq!(skills.len(), 1);
@@ -605,7 +668,10 @@ mod tests {
     #[test]
     fn resource_paths_are_confined() {
         let root = temp_dir("resource");
-        write(&root.join("SKILL.md"), "---\nname: x\ndescription: d\n---\nBody content\n");
+        write(
+            &root.join("SKILL.md"),
+            "---\nname: x\ndescription: d\n---\nBody content\n",
+        );
         write(&root.join("notes.txt"), "secret");
         write(&root.join("..").join("evil.txt"), "evil");
         let skill_dir = root.clone();
@@ -626,7 +692,7 @@ mod tests {
         let root = temp_dir("legacy");
         write(&root.join(".fx/skills/legacy/SKILL.md"), "");
         let catalog = discover(&root);
-        let skill = catalog.find("legacy").expect("legacy skill"); 
+        let skill = catalog.find("legacy").expect("legacy skill");
         assert_eq!(skill.description, "");
         assert!(catalog.find("legacy").is_some());
         let _ = std::fs::remove_dir_all(&root);
