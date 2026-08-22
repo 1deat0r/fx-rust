@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>libfx · fxrs ACP over stdio</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --yellow: #d29922; --red: #f85149; --code: #e3b341;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header { padding: 32px 24px 8px; max-width: 960px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  h1 code { color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 18px; }
+  main { max-width: 960px; margin: 0 auto; padding: 0 24px 60px; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  h2 { font-size: 18px; margin: 0 0 10px; }
+  h2 .tag { font-size: 12px; color: var(--dim); font-weight: 400; margin-left: 8px; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #0b0f14; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+  pre .k { color: var(--accent); } pre .s { color: var(--green); } pre .c { color: var(--dim); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .frame { background: #0b0f14; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; overflow-x: auto; }
+  .arrow { text-align: center; color: var(--dim); font-size: 12px; margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; }
+  .note { border-left: 3px solid var(--yellow); background: rgba(210,153,34,.08); padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13.5px; }
+  .ok { color: var(--green); } .err { color: var(--red); }
+  .badge { display: inline-block; background: var(--panel2); border: 1px solid var(--border); color: var(--dim); font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-right: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><code>libfx</code> · fxrs ACP over stdio</h1>
+  <p class="sub">
+    The Agent Client Protocol (ACP) wire format spoken by
+    <code>fxrs acp</code> — the Rust 1:1 port of <code>fx</code> — as wrapped by
+    the dependency-free <code>libfx</code> JavaScript SDK.
+  </p>
+  <p>
+    <span class="badge">Node ≥ 20</span>
+    <span class="badge">zero deps</span>
+    <span class="badge">JSON-RPC 2.0</span>
+    <span class="badge">Apache-2.0</span>
+  </p>
+</header>
+
+<main>
+  <section>
+    <h2>Architecture <span class="tag">stdio-bound today</span></h2>
+    <p>
+      <code>fxrs acp</code> is a long-lived server that reads newline-delimited
+      JSON-RPC 2.0 requests from <b>stdin</b> and writes responses + streaming
+      notifications to <b>stdout</b>. <code>libfx</code> spawns that process,
+      writes request frames, correlates responses by <code>id</code>, and emits
+      every <code>session/update</code> notification to your event handlers.
+    </p>
+    <table>
+      <tr><th>Direction</th><th>Frame</th><th>Meaning</th></tr>
+      <tr><td>client → server</td><td><code>{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}</code></td><td>negotiate protocol</td></tr>
+      <tr><td>server → client</td><td><code>{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{...}}}</code></td><td>capabilities + agent info</td></tr>
+      <tr><td>server → client</td><td><code>{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s…","update":{...}}}</code></td><td>streaming event (no id)</td></tr>
+      <tr><td>server → client</td><td><code>{"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"Session not found"}}</code></td><td>RPC error</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Protocol frames, side by side <span class="tag">a live conversation</span></h2>
+    <div class="grid">
+      <div>
+        <p class="arrow">▶ request (client writes a line)</p>
+        <pre class="frame"><span class="c">// initialize</span>
+<span class="k">{"jsonrpc":"2.0",</span><span class="s">"id":1</span><span class="k">,</span><span class="s">"method"</span><span class="k">:</span><span class="s">"initialize"</span><span class="k">,</span><span class="s">"params"</span><span class="k">:{</span><span class="s">"protocolVersion"</span><span class="k">:</span><span class="s">1</span><span class="k">}}</span>
+
+<span class="c">// session/new</span>
+<span class="k">{"jsonrpc":"2.0",</span><span class="s">"id":2</span><span class="k">,</span><span class="s">"method"</span><span class="k">:</span><span class="s">"session/new"</span><span class="k">,</span><span class="s">"params"</span><span class="k">:{}}</span>
+
+<span class="c">// session/prompt (snake_case prompt_text)</span>
+<span class="k">{"jsonrpc":"2.0",</span><span class="s">"id":3</span><span class="k">,</span><span class="s">"method"</span><span class="k">:</span><span class="s">"session/prompt"</span><span class="k">,</span>
+ <span class="s">"params"</span><span class="k">:{</span><span class="s">"sessionId"</span><span class="k">:</span><span class="s">"s1a.."</span><span class="k">,</span><span class="s">"prompt_text"</span><span class="k">:</span><span class="s">"hi"</span><span class="k">}}</span></pre>
+      </div>
+      <div>
+        <p class="arrow">◀ response / notification (server writes lines)</p>
+        <pre class="frame"><span class="k">{"jsonrpc":"2.0",</span><span class="s">"id":1</span><span class="k">,</span><span class="s">"result"</span><span class="k">:{</span><span class="s">"protocolVersion"</span><span class="k">:</span><span class="s">1</span><span class="k">,</span><span class="s">"agentInfo"</span><span class="k">:{...</span><span class="s">"name"</span><span class="k">:</span><span class="s">"fx"</span><span class="k">}}}</span>
+
+<span class="k">{"jsonrpc":"2.0",</span><span class="s">"id":2</span><span class="k">,</span><span class="s">"result"</span><span class="k">:{</span><span class="s">"sessionId"</span><span class="k">:</span><span class="s">"s1a.."</span><span class="k">,</span><span class="s">"modes"</span><span class="k">:{</span><span class="s">"currentModeId"</span><span class="k">:</span><span class="s">"ask"</span><span class="k">}}}</span>
+
+<span class="c">// notifications stream with NO id:</span>
+<span class="k">{"jsonrpc":"2.0",</span><span class="s">"method"</span><span class="k">:</span><span class="s">"session/update"</span><span class="k">,</span><span class="s">"params"</span><span class="k">:{</span>
+  <span class="s">"sessionId"</span><span class="k">:</span><span class="s">"s1a.."</span><span class="k">,</span>
+  <span class="s">"update"</span><span class="k">:{</span><span class="s">"sessionUpdate"</span><span class="k">:</span><span class="s">"agent_message_chunk"</span><span class="k">,</span>
+    <span class="s">"content"</span><span class="k">:{</span><span class="s">"type"</span><span class="k">:</span><span class="s">"text"</span><span class="k">,</span><span class="s">"text"</span><span class="k">:</span><span class="s">"Hello"</span><span class="k">}}}}</span></pre>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:10px">
+      Streaming updates include <code>agent_message_chunk</code>,
+      <code>user_message_chunk</code>, <code>tool_call</code>,
+      <code>tool_call_update</code>, <code>step_started</code>, and
+      <code>available_commands_update</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>libfx in 10 lines</h2>
+    <pre><span class="k">import</span> { FxClient } <span class="k">from</span> <span class="s">"./libfx.mjs"</span>;
+<span class="k">const</span> client = <span class="k">new</span> FxClient({ bin: <span class="s">"./target/debug/fxrs"</span> });
+<span class="k">await</span> client.start();
+<span class="k">const</span> { protocolVersion } = <span class="k">await</span> client.initialize();      <span class="c">// 1</span>
+<span class="k">const</span> { sessionId } = <span class="k">await</span> client.sessionNew({});
+<span class="k">await</span> client.sessionPrompt(sessionId, <span class="s">"say hello in one line"</span>, {
+  onEvent: (ev) =&gt; {
+    <span class="k">if</span> (ev.sessionUpdate === <span class="s">"agent_message_chunk"</span>) process.stdout.write(ev.content?.text ?? <span class="s">""</span>);
+  },
+});
+<span class="k">await</span> client.close();</pre>
+  </section>
+
+  <section>
+    <h2>Running in a browser <span class="tag">WebSocket-to-stdio bridge</span></h2>
+    <p>
+      <code>fxrs acp</code> is <b>stdio-bound</b> today (no listen socket), so a
+      browser page cannot talk to it directly. The plan for browser usage is a
+      small <b>WebSocket-to-stdio bridge</b> that owns the child process in Node
+      and translates line-delimited JSON to/from WebSocket messages:
+    </p>
+    <pre><span class="c">// bridge.mjs (Node side — owns fxrs acp)</span>
+<span class="k">import</span> { WebSocketServer } from <span class="s">"ws"</span>;
+<span class="k">import</span> { FxClient } from <span class="s">"libfx"</span>;
+
+<span class="k">const</span> client = <span class="k">new</span> FxClient();           <span class="c">// spawns fxrs acp</span>
+<span class="k">await</span> client.start();
+<span class="k">await</span> client.initialize();
+
+<span class="k">const</span> wss = <span class="k">new</span> WebSocketServer({ port: <span class="s">8080</span> });
+wss.on(<span class="s">"connection"</span>, (ws) =&gt; {
+  ws.on(<span class="s">"message"</span>, (data) =&gt; {
+    <span class="c">// data is a JSON-RPC request string; write it to the child:</span>
+    client.child.stdin.write(data + <span class="s">"\n"</span>);
+  });
+  client.on(<span class="s">"update"</span>, (params) =&gt;        <span class="c">// stream events back</span>
+    ws.send(JSON.stringify({ <span class="s">"method"</span>: <span class="s">"session/update"</span>, <span class="s">"params"</span>: params })));
+});</pre>
+    <p>
+      The browser side then behaves exactly like the Node side — send request
+      objects over <code>ws.send</code>, and route <code>session/update</code>
+      messages to the same event handlers libfx uses. Until then, use libfx in
+      Node or bundled with a bridge like the one above.
+    </p>
+    <p class="note">
+      <b>Note on the current fxrs build:</b> <code>session/new</code> allocates
+      a session id but the server flushes sessions to disk on the first prompt.
+      A <code>session/prompt</code> against an id that was never flushed
+      returns an RPC error — create sessions via a raw no-sessionId prompt for
+      persistence, or wait for the server-side fix. The SDK surface stays the
+      same either way.
+    </p>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+(node:2750816) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2750822) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[32m✔ initialize returns protocolVersion 1 and agent capabilities [90m(13.212626ms)[39m[39m
+[32m✔ session/new returns sessionId, configOptions and modes; initialize is idempotent [90m(8.606698ms)[39m[39m
+[32m✔ session/list returns a sessions array (empty on a pristine store) [90m(8.321124ms)[39m[39m
+[32m✔ session/set_mode roundtrips currentModeId [90m(7.657976ms)[39m[39m
+[32m✔ session/load and session/resume reject with an RPC error for an unknown session [90m(7.729997ms)[39m[39m
+[32m✔ session/close echoes the sessionId; session/remove reports deleted:false for a missing session [90m(7.958831ms)[39m[39m
+[32m✔ session/cancel resolves cancelled:true even with no active prompt [90m(6.895426ms)[39m[39m
+[32m✔ session/prompt with a sessionId fails fast while the session is unpersisted [90m(8.400336ms)[39m[39m
+[32m✔ prompt() helper rejects quickly for a bad sessionId [90m(7.073959ms)[39m[39m
+[32m✔ requests against a stopped client reject [90m(10.601973ms)[39m[39m
+[32m✔ LineReader handles split chunks, CRLF, garbage and a trailing unterminated line [90m(9.974635ms)[39m[39m
+
+thread 'main' (2751063) panicked at src/skills/mod.rs:294:51:
+end byte index 1024 is not a char boundary; it is inside '未' (bytes 1022..1025 of string)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[32m✔ session persistence roundtrip: raw no-sessionId prompt saves a session file; list/load/close/remove see it [90m(19.529316ms)[39m[39m
+[32m✔ xtermAdapter renders agent chunks and tool calls, stops after dispose, and sendPrompt forwards [90m(0.493926ms)[39m[39m
+PASS (fxrs /home/mustbearn/Projects/AI Agents/fx-rust/target/debug/fxrs · initialize v1 · session s1a0288a1747-d2e47de4 · close ok)
+[32m✔ sdk/tests/test-smoke.mjs [90m(52.385618ms)[39m[39m
+[34mℹ tests 14[39m
+[34mℹ suites 0[39m
+[34mℹ pass 14[39m
+[34mℹ fail 0[39m
+[34mℹ cancelled 0[39m
+[34mℹ skipped 0[39m
+[34mℹ todo 0[39m
+[34mℹ duration_ms 179.08222[39m

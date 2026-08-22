@@ -1,0 +1,43 @@
+{
+  "name": "libfx",
+  "version": "0.1.0",
+  "description": "Dependency-free JavaScript SDK for fxrs (Rust 1:1 port of vercel-labs/fx): an Agent Client Protocol (ACP) client over stdio JSON-RPC.",
+  "type": "module",
+  "main": "./libfx.mjs",
+  "exports": {
+    ".": "./libfx.mjs",
+    "./node": "./libfx.mjs",
+    "./terminal": "./xterm-adapter.mjs"
+  },
+  "files": [
+    "libfx.mjs",
+    "xterm-adapter.mjs",
+    "README.md",
+    "tests/",
+    "examples/",
+    "term-demo/",
+    "index.html"
+  ],
+  "scripts": {
+    "test": "node --test \"tests/*.mjs\"",
+    "test:smoke": "node tests/test-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "fx",
+    "fxrs",
+    "vercel",
+    "acp",
+    "agent-client-protocol",
+    "sdk",
+    "cli",
+    "json-rpc"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vercel/fx"
+  }
+}
