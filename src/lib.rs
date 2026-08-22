@@ -10,6 +10,7 @@
 //! (https://github.com/vercel-labs/fx, Apache-2.0). This is an independent
 //! Rust implementation, not a translation of the Zig sources.
 
+pub mod acp;
 pub mod agent;
 pub mod approval;
 pub mod auth;

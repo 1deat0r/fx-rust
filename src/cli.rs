@@ -741,6 +741,13 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let sub_args: Vec<String> = args.clone().cloned().collect();
             return cmd_subagent(&sub_args).await;
         }
+        Some("acp") => {
+            // ACP (Agent Client Protocol) stdio server. External clients
+            // (editors, IDEs, agents) drive fxrs sessions over JSON-RPC.
+            let mut server = crate::acp::server::AcpServer::new(crate::version::VERSION);
+            server.serve_stdio(&cwd()).await?;
+            Ok(0)
+        }
         Some("gh") => {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
             run_gh(&rest).await
