@@ -26,6 +26,12 @@ pub enum PermissionMode {
     Yolo,
 }
 
+impl Default for PermissionMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 impl std::fmt::Display for PermissionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
