@@ -77,7 +77,7 @@ pub fn tool_kind(tool_name: &str) -> &str {
     match tool_name {
         "write_file" | "edit_file" | "delete_file" | "rename_file" | "copy_file"
         | "create_folder" | "open_file" => "edit",
-        "run_command" | "background_process" | "terminal" => "bash",
+        "run_command" | "background_process" | "terminal" | "browser_terminal" => "bash",
         "read_file" | "list_files" | "glob_files" | "grep_files" | "file_info" => "read",
         "web_search" | "web_fetch" => "web",
         "memory" => "memory",

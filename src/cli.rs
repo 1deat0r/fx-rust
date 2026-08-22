@@ -1054,13 +1054,28 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
         out.push(('w', "git repository detected".into()));
     }
 
-    // 8. Terminal integration (tmux) — needed for the `terminal` tool.
-    if crate::terminal::tmux_available() {
-        out.push(('w', "tmux detected (terminal sessions enabled)".into()));
+    // 8. Terminal integration — native PTY (default backend) + tmux (durable).
+    if crate::terminal::native_pty_available() {
+        out.push((
+            'w',
+            "native PTY detected (default terminal backend + browser_terminal enabled)".into(),
+        ));
     } else {
         out.push((
             'w',
-            "tmux not found — terminal sessions require tmux (apt/brew install tmux)".into(),
+            "native PTY unavailable — terminal sessions default to tmux; browser_terminal exec disabled".into(),
+        ));
+    }
+    if crate::terminal::tmux_available() {
+        out.push((
+            'w',
+            "tmux detected (durable terminal sessions enabled)".into(),
+        ));
+    } else {
+        out.push((
+            'w',
+            "tmux not found — durable terminal sessions require tmux (apt/brew install tmux)"
+                .into(),
         ));
     }
 
@@ -1084,7 +1099,7 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
         Err(e) => out.push(('w', format!("background store unreadable: {e:#}"))),
     }
 
-    // 10. Terminal store: parse + live session count.
+    // 10. Terminal store: parse + live/lost session counts.
     match crate::terminal::TerminalStore::open() {
         Ok(store) => {
             let running = store
@@ -1096,6 +1111,17 @@ pub fn doctor_checks(cfg: &config::Config) -> Vec<(char, String)> {
                 out.push((
                     'w',
                     format!("{running} terminal session(s) running — `fxrs terminal`"),
+                ));
+            }
+            let lost = store
+                .list()
+                .iter()
+                .filter(|r| r.status == crate::terminal::TermStatus::Lost)
+                .count();
+            if lost > 0 {
+                out.push((
+                    'w',
+                    format!("{lost} terminal session(s) marked lost (host gone) — `fxrs terminal`"),
                 ));
             }
         }

@@ -31,13 +31,19 @@ code with a single keystroke or fully hands-free.
   the store reconciles liveness on load, so a resumed agent sees accurate
   status and a `N background process(es) running` banner. Inspect from the
   shell with `fxrs background` or `/background`.
-- **Terminal sessions (tmux)**: the `terminal` tool creates real persistent
-  terminal sessions (each on its own tmux socket, never touching your server)
-  and supports `create` / `list` / `send` (literal keystrokes + Enter) / `read`
-  (capture-pane with scrollback; ANSI stripped by default, `clear_after`
-  supported) / `resize` / `stop`. Sessions survive agent turns and are
-  reconciled against tmux on load. Drive from the shell with `fxrs terminal`
-  or `/terminal`.
+- **Terminal sessions (native PTY + tmux)**: the `terminal` tool creates real
+  terminal sessions on a native PTY by default (matching fx upstream's
+  `backend orelse .native`) or on a per-session tmux socket when `backend:
+  "tmux"` is requested (durable across process restarts) and supports
+  `create` / `list` / `exec` (run a command to completion in a real terminal,
+  `return_when` exit|started, `wait_ceiling_ms`) / `send` (`write`) / `read`
+  (scrollback; ANSI stripped by default, `clear_after` supported) / `resize` /
+  `stop` (`close`). Liveness is reconciled on load through the terminal
+  recovery decision model — host + process evidence, corrupt records
+  isolated, native sessions whose host process is gone reconciled to `lost`.
+  `browser_terminal` (`{action: "exec", command}`) runs a command in a
+  native terminal and returns its output and exit code. Drive from the shell
+  with `fxrs terminal` or `/terminal`.
 - **MCP clients (stdio + remote)**: `mcpServers` array in `~/.fx/settings.json`,
   workspace settings, or repo `.fx.json`. Three transports: `stdio` (default,
   `command`/`args`/`env`), `http` / `streamable-http` (modern streamable HTTP),

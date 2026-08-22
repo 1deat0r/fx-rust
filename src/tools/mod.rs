@@ -86,13 +86,12 @@ pub fn target_for(name: &str, args_json: &str) -> Option<String> {
                 s("process_id")
             }
         }
-        "terminal" => {
-            if args.get("action").and_then(|v| v.as_str()) == Some("create") {
-                s("command").or_else(|| s("cwd"))
-            } else {
-                s("terminal_id")
-            }
-        }
+        "terminal" => match args.get("action").and_then(|v| v.as_str()) {
+            Some("create") => s("command").or_else(|| s("cwd")),
+            Some("exec") => s("command"),
+            _ => s("terminal_id"),
+        },
+        "browser_terminal" => s("command"),
         "run_command" => s("command"),
         "read_file" | "write_file" | "edit_file" | "delete_file" | "rename_file" | "copy_file"
         | "create_folder" | "open_file" | "file_info" => s("file_path")
@@ -133,6 +132,7 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
         "install_skill" => skill::install_skill(ctx, args),
         "view_image" => vision::view_image(ctx, args),
         "terminal" => terminal::terminal(ctx, args).await,
+        "browser_terminal" => terminal::browser_terminal(ctx, args).await,
         "subagent" => {
             let prompt = args
                 .get("prompt")
@@ -276,25 +276,43 @@ pub fn schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "terminal",
-                "description": "Create and drive persistent terminal sessions (tmux-backed). Useful for interactive programs, REPLs, long-lived shells, and anything that needs a real TTY rather than one-shot run_command. Actions: create (start a session), list, send (type input, Enter by default), read/get_output (capture the pane with scrollback), resize, stop (terminate). Sessions survive agent turns and are restored on resume. Sensitive.",
+                "description": "Create and drive persistent terminal sessions (native PTY by default, tmux optional). Useful for interactive programs, REPLs, long-lived shells, and anything that needs a real TTY rather than one-shot run_command. Actions: create/start (begin a session), exec (run a command to completion in a real terminal), list, send/write (type input, Enter by default), read/get_output (capture the pane with scrollback), resize, stop/close (terminate). Native sessions live for this process; tmux sessions survive across processes. Sensitive.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["create", "list", "send", "read", "get_output", "resize", "stop"], "description": "What to do (default list)."},
+                        "action": {"type": "string", "enum": ["create", "start", "exec", "list", "send", "write", "read", "get_output", "resize", "stop", "close"], "description": "What to do (default list)."},
+                        "backend": {"type": "string", "enum": ["native", "tmux"], "description": "Session backend (default native). tmux sessions survive process restarts."},
                         "terminal_id": {"type": "string", "description": "Terminal session id. Required for send/read/resize/stop."},
-                        "command": {"type": "string", "description": "Shell or command to run in the session (default bash). Used by create."},
+                        "command": {"type": "string", "description": "Shell or command to run in the session (default bash). Used by create/exec."},
                         "name": {"type": "string", "description": "Optional short label for the terminal."},
                         "cwd": {"type": "string", "description": "Working directory (relative to workspace). Defaults to the workspace."},
                         "rows": {"type": "integer", "description": "Terminal height in rows (for create/resize)."},
                         "columns": {"type": "integer", "description": "Terminal width in columns (for create/resize)."},
                         "input": {"type": "string", "description": "Text to send to the session (for send)."},
                         "enter": {"type": "boolean", "description": "Send Enter after the input (default true)."},
-                        "scrollback": {"type": "integer", "description": "For read: history lines above the visible pane to include (default 200, max 5000)."},
+                        "scrollback": {"type": "integer", "description": "For read: history lines to include (default 200, max 5000)."},
                         "max_bytes": {"type": "integer", "description": "For read: max bytes returned (default 65536)."},
                         "raw": {"type": "boolean", "description": "For read: keep ANSI escape codes (default false — stripped)."},
-                        "clear_after": {"type": "boolean", "description": "For read: clear the pane history after capturing (default false)."}
+                        "clear_after": {"type": "boolean", "description": "For read: clear the captured output after reading (default false)."},
+                        "wait_ceiling_ms": {"type": "integer", "description": "For exec: max milliseconds to wait (default 60000)."},
+                        "return_when": {"type": "string", "enum": ["exit", "started"], "description": "For exec: return when the command exits (default) or as soon as it produces output (leaves the session running)."}
                     },
                     "required": ["action"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "browser_terminal",
+                "description": "Execute a command in a real terminal (native PTY) and return its output and exit code. A browser-hosted terminal surface: accepts only action \"exec\" and a command string. Useful when a command needs a TTY (interactive tools, prompts, REPLs) without leaving a session behind. Sensitive.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["exec"], "description": "Must be \"exec\"."},
+                        "command": {"type": "string", "description": "The shell command to run in the terminal."}
+                    },
+                    "required": ["action", "command"]
                 }
             }
         }),

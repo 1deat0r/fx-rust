@@ -33,6 +33,7 @@ pub mod shell_command;
 pub mod slash_commands;
 pub mod tape;
 pub mod terminal;
+pub mod terminal_recovery;
 pub mod tool_prep;
 pub mod tools;
 pub mod ui;
