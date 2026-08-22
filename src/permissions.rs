@@ -18,18 +18,13 @@ use anyhow::{bail, Result};
 use globset::Glob;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionMode {
     Ask,
+    #[default]
     Auto,
     Yolo,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl std::fmt::Display for PermissionMode {
