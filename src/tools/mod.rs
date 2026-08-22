@@ -143,7 +143,23 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
                 .get("model")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            subagent::run_subagent(ctx.config.clone(), ctx.store.clone(), prompt, model).await
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let permission_mode = args
+                .get("permission_mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            subagent::run_subagent_named(
+                ctx.config.clone(),
+                ctx.store.clone(),
+                prompt,
+                model,
+                name,
+                permission_mode,
+            )
+            .await
         }
         "mcp" => {
             // Meta-tool: manage/look up connected MCP servers.
@@ -611,7 +627,9 @@ pub fn schemas() -> Vec<Value> {
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string", "description": "The self-contained task for the sub-agent, including any context it needs"},
-                        "model": {"type": "string", "description": "Optional model override for the sub-agent"}
+                        "model": {"type": "string", "description": "Optional model override for the sub-agent"},
+                        "name": {"type": "string", "description": "Optional sub-agent name (required by the subagent domain contract; defaults to a generated id)"},
+                        "permission_mode": {"type": "string", "description": "Optional permission mode override (ask, auto, yolo)"}
                     },
                     "required": ["prompt"]
                 }
