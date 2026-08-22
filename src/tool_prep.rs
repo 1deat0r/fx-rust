@@ -206,6 +206,8 @@ mod tests {
                 input_appearance: "auto".into(),
                 presentation_mode: "default".into(),
                 update_channel: "stable".into(),
+                tool_filter: None,
+                reasoning_effort: None,
             }),
             store: crate::sessions::SessionStore::new().unwrap(),
             session_id: String::new(),

@@ -301,6 +301,12 @@ pub struct Config {
     pub presentation_mode: String,
     /// Upgrade channel (`stable` | `beta`).
     pub update_channel: String,
+    /// Optional subagent tool filter: when set, only these tool names are
+    /// published to the model and executed (subagent admission authority).
+    /// Never read from settings files; internal to the agent runtime.
+    pub tool_filter: Option<Vec<String>>,
+    /// Optional reasoning-effort override for subagent runs.
+    pub reasoning_effort: Option<String>,
 }
 
 impl Config {
@@ -533,6 +539,8 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         input_appearance,
         presentation_mode,
         update_channel,
+        tool_filter: None,
+        reasoning_effort: None,
         mcp_servers: merge_mcp_servers(
             &merge_mcp_servers(&settings.mcp_servers, &ws_entry.mcp_servers),
             &project.mcp_servers,

@@ -151,13 +151,20 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
                 .get("permission_mode")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            subagent::run_subagent_named(
+            let tool_names = args.get("tools").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            });
+            subagent::run_subagent_named_with_parent(
                 ctx.config.clone(),
                 ctx.store.clone(),
                 prompt,
                 model,
                 name,
                 permission_mode,
+                &ctx.session_id,
+                tool_names,
             )
             .await
         }
@@ -629,7 +636,8 @@ pub fn schemas() -> Vec<Value> {
                         "prompt": {"type": "string", "description": "The self-contained task for the sub-agent, including any context it needs"},
                         "model": {"type": "string", "description": "Optional model override for the sub-agent"},
                         "name": {"type": "string", "description": "Optional sub-agent name (required by the subagent domain contract; defaults to a generated id)"},
-                        "permission_mode": {"type": "string", "description": "Optional permission mode override (ask, auto, yolo)"}
+                        "permission_mode": {"type": "string", "description": "Optional permission mode override (ask, auto, yolo)"},
+                        "tools": {"type": "array", "items": {"type": "string"}, "description": "Optional admission tool-name allowlist for the sub-agent (defaults to the full toolset)"}
                     },
                     "required": ["prompt"]
                 }
@@ -987,6 +995,25 @@ fn xml_unescape(s: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&amp;", "&")
+}
+
+/// Tool schemas restricted to a subagent authority tool filter. An empty
+/// filter publishes nothing; `None` publishes the full set.
+pub fn schemas_filtered(filter: Option<&[String]>) -> Vec<Value> {
+    let all = schemas();
+    let Some(filter) = filter else {
+        return all;
+    };
+    all.into_iter()
+        .filter(|s| {
+            let name = s
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            name.is_empty() || filter.iter().any(|t| t.as_str() == name)
+        })
+        .collect()
 }
 
 /// Whether `name` is a built-in (non-MCP) tool in the local set.

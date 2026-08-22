@@ -105,6 +105,9 @@ pub struct SubagentRecord {
     pub human_epoch_high: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// Admission snapshot captured when the child was created (authority for
+    /// the child's tool filter). Optional for CLI/legacy records.
+    pub admission: Option<crate::subagent_authority::AdmissionSnapshot>,
 }
 
 impl Default for SubagentRecord {
@@ -137,6 +140,7 @@ impl Default for SubagentRecord {
             human_epoch_high: 0,
             created_at_ms: 0,
             updated_at_ms: 0,
+            admission: None,
         }
     }
 }

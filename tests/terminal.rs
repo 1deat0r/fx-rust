@@ -218,6 +218,8 @@ fn browser_terminal_exec_runs_command_and_returns_output() {
             input_appearance: "auto".into(),
             presentation_mode: "default".into(),
             update_channel: "stable".into(),
+            tool_filter: None,
+            reasoning_effort: None,
         }),
         store: fxrs::sessions::SessionStore::new().unwrap(),
     };

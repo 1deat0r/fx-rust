@@ -1013,13 +1013,26 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
             let cmd = crate::subagent_domain::validate_command(&input)
                 .map_err(|e| anyhow::anyhow!("invalid create command: {e}"))?;
             let child_id = format!("sub-{}", now_ms());
-            let record = store.create(
+            let mut record = store.create(
                 &child_id,
                 match &cmd {
                     Command::Create(c) => c,
                     _ => unreachable!(),
                 },
             )?;
+            let admission = crate::subagent_authority::AdmissionInput {
+                parent_id: "cli".into(),
+                source_id: crate::operation_id::operation_id("cli-subagent"),
+                model: record.configuration.model.clone().unwrap_or_default(),
+                permission_mode: crate::permissions::PermissionMode::parse(
+                    &record.configuration.permission_mode,
+                )
+                .unwrap_or(crate::permissions::PermissionMode::Yolo),
+                tool_names: Vec::new(),
+                ..Default::default()
+            };
+            record.admission = crate::subagent_authority::capture_admission(&admission).ok();
+            store.save(&record)?;
             println!(
                 "created subagent `{}` (name: {}, state: {:?}, parent: {:?})",
                 record.child_id, record.configuration.name, record.state, record.parent_id

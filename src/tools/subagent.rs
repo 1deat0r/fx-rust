@@ -36,6 +36,32 @@ pub async fn run_subagent_named(
     name: Option<String>,
     permission_mode: Option<String>,
 ) -> Result<serde_json::Value, anyhow::Error> {
+    run_subagent_named_with_parent(
+        config,
+        store,
+        prompt,
+        model,
+        name,
+        permission_mode,
+        "root",
+        None,
+    )
+    .await
+}
+
+/// `run_subagent_named` plus the parent session id (admission authority) and
+/// an optional tool-name restriction.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_subagent_named_with_parent(
+    config: Arc<Config>,
+    store: crate::sessions::SessionStore,
+    prompt: String,
+    model: Option<String>,
+    name: Option<String>,
+    permission_mode: Option<String>,
+    parent_id: &str,
+    tool_names: Option<Vec<String>>,
+) -> Result<serde_json::Value, anyhow::Error> {
     let prompt = prompt.trim().to_string();
     if prompt.is_empty() {
         return Ok(err_json("subagent: `prompt` must not be empty".into()));
@@ -81,6 +107,31 @@ pub async fn run_subagent_named(
             )));
         }
     };
+    // Capture the child's admission authority (upstream captureAdmission).
+    let admission = crate::subagent_authority::AdmissionInput {
+        parent_id: parent_id.to_string(),
+        source_id: crate::operation_id::operation_id("tool-subagent"),
+        model: create_cmd
+            .configuration
+            .model
+            .clone()
+            .unwrap_or_else(|| config.model.clone()),
+        permission_mode: crate::permissions::PermissionMode::parse(
+            &create_cmd.configuration.permission_mode,
+        )
+        .unwrap_or(crate::permissions::PermissionMode::Yolo),
+        tool_names: tool_names.unwrap_or_default(),
+        ..Default::default()
+    };
+    match crate::subagent_authority::capture_admission(&admission) {
+        Ok(snapshot) => {
+            control.admission = Some(snapshot);
+            let _ = ctrl_store.save(&control);
+        }
+        Err(e) => {
+            return Ok(err_json(format!("subagent: admission denied: {e}")));
+        }
+    }
 
     let depth = DEPTH.with(|d| d.get());
     if depth >= MAX_DEPTH {

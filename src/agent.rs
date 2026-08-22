@@ -198,9 +198,12 @@ pub async fn run(
             if steps == 1 && config.first_call_tool_choice == FirstCallToolChoice::None {
                 None
             } else if mcp_tools.is_empty() {
-                Some(tools::schemas())
+                Some(tools::schemas_filtered(config.tool_filter.as_deref()))
             } else {
-                Some(tools::schemas_with_mcp(&mcp_tools))
+                Some(filter_mcp_schemas(
+                    tools::schemas_with_mcp(&mcp_tools),
+                    config.tool_filter.as_deref(),
+                ))
             };
         // Execution-memory block is rebuilt fresh each turn (append once).
         let mut turn_system = system_base.clone();
@@ -473,6 +476,19 @@ pub async fn run(
         for idx in &order {
             let call = calls.get(idx).cloned().unwrap();
             tool_calls += 1;
+
+            // Subagent authority tool filter: names outside the admission
+            // snapshot are denied pre-execution.
+            if let Some(filter) = config.tool_filter.as_deref() {
+                if !filter.iter().any(|t| t == &call.name) && tools_allow_check(&call.name) {
+                    let denied = crate::subagent_domain::blocked_tool_json_public(
+                        &call.name,
+                        "Tool blocked by subagent admission authority.",
+                    );
+                    transcript.push(Message::tool(call.id.clone(), denied.to_string()));
+                    continue;
+                }
+            }
 
             // Active-mode tool policy (upstream mode_registry.toolAllowed):
             // a read-only mode blocks non-read-only tools pre-execution.
@@ -906,4 +922,25 @@ fn usage_recovery_checkpoint(session_id: &str, sess: &crate::sessions::Session) 
 /// like upstream ToolSet.registry).
 fn tools_allow_check(name: &str) -> bool {
     crate::tools::is_builtin_tool_name(name)
+}
+
+/// Apply a subagent tool filter to MCP-published schemas.
+fn filter_mcp_schemas(
+    schemas: Vec<serde_json::Value>,
+    filter: Option<&[String]>,
+) -> Vec<serde_json::Value> {
+    let Some(filter) = filter else {
+        return schemas;
+    };
+    schemas
+        .into_iter()
+        .filter(|s| {
+            let name = s
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            name.is_empty() || filter.contains(&name.to_string())
+        })
+        .collect()
 }

@@ -98,6 +98,32 @@ pub async fn run_work_item(
     record.updated_at_ms = t0;
     ctrl.save(&record)?;
 
+    // Child authority: the subagent runs under its own configuration —
+    // optional model override, its permission mode (upstream default yolo),
+    // and its admission tool filter.
+    let mut child_config: Config = (*config).clone();
+    if let Some(model) = record.configuration.model.clone() {
+        child_config.model = model;
+    }
+    child_config.permission_mode =
+        crate::permissions::PermissionMode::parse(&record.configuration.permission_mode)
+            .unwrap_or(crate::permissions::PermissionMode::Yolo);
+    if let Some(effort) = record.configuration.effort.clone() {
+        if matches!(effort.as_str(), "low" | "medium" | "high") {
+            child_config.reasoning_effort = Some(effort);
+        } else if effort.as_str() == "none" || effort.is_empty() {
+            child_config.reasoning_effort = None;
+        } else {
+            child_config.reasoning_effort = Some(effort);
+        }
+    }
+    if let Some(admission) = record.admission.clone() {
+        if !admission.tool_names.is_empty() {
+            child_config.tool_filter = Some(admission.tool_names);
+        }
+    }
+    let child_config = Arc::new(child_config);
+
     let req = AgentRequest {
         prompt: Some(work.content.clone()),
         system: None,
@@ -106,7 +132,7 @@ pub async fn run_work_item(
         messages: Vec::new(),
     };
     let human = crate::ui::QuietHuman;
-    let outcome = crate::agent::run(req, config, &human, &session_store)
+    let outcome = crate::agent::run(req, child_config, &human, &session_store)
         .await
         .context("nested agent run")?;
 

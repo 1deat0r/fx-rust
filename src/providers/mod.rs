@@ -426,6 +426,8 @@ mod tests {
             input_appearance: "auto".into(),
             presentation_mode: "default".into(),
             update_channel: "stable".into(),
+            tool_filter: None,
+            reasoning_effort: None,
         };
         let p = resolve_provider(&cfg).unwrap();
         assert_eq!(p.provider, ProviderKind::OpenAi);

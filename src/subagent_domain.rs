@@ -809,6 +809,11 @@ pub fn validate_notification_policy(
     })
 }
 
+/// Public alias for external modules that need the pre-tool-use denial JSON.
+pub fn blocked_tool_json_public(tool_name: &str, reason: &str) -> serde_json::Value {
+    crate::modes::blocked_tool_json(tool_name, reason)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
