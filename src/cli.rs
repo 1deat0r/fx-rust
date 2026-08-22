@@ -2765,16 +2765,16 @@ mod tests {
         assert!(!img.data_base64.is_empty());
         // round-trips to the original bytes
         let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data_base64).unwrap();
-        assert!(decoded.len() > 0);
+        assert!(!decoded.is_empty());
         assert!(decoded.starts_with(b"\x89PNG"));
     }
 
     #[test]
     fn image_input_rejects_bad_extension() {
         let path = Path::new("/tmp/fxrs-tiny.png.xxx");
-        std::fs::write(&path, "nope").unwrap();
-        assert!(load_image_input(&path).is_err());
-        let _ = std::fs::remove_file(&path);
+        std::fs::write(path, "nope").unwrap();
+        assert!(load_image_input(path).is_err());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
