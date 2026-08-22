@@ -1309,6 +1309,64 @@ async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
                 println!("no subagents");
                 return Ok(0);
             }
+            let tree = args.iter().any(|a| a == "--tree");
+            if tree {
+                let roots = crate::subagent_relationship::roots(&records);
+                let by_parent: std::collections::BTreeMap<String, Vec<String>> = records
+                    .iter()
+                    .filter_map(|r| r.parent_id.clone().map(|p| (p, r.child_id.clone())))
+                    .into_iter()
+                    .fold(std::collections::BTreeMap::new(), |mut m, (p, c)| {
+                        m.entry(p).or_insert_with(Vec::new).push(c);
+                        m
+                    });
+                fn print_node(
+                    records: &[crate::subagent_control::SubagentRecord],
+                    by_parent: &std::collections::BTreeMap<String, Vec<String>>,
+                    id: &str,
+                    prefix: &str,
+                    is_last: bool,
+                ) {
+                    let r = records.iter().find(|r| r.child_id == id);
+                    let (state, name) = match r {
+                        Some(r) => (
+                            format!("{:?}", r.state).to_lowercase(),
+                            r.configuration.name.clone(),
+                        ),
+                        None => ("?".into(), "-".into()),
+                    };
+                    let connector = if is_last { "└─ " } else { "├─ " };
+                    println!("{prefix}{connector}{id} [{state}] {name}");
+                    let children = by_parent.get(id).cloned().unwrap_or_default();
+                    let child_prefix = format!("{prefix}{}", if is_last { "   " } else { "│  " });
+                    for (i, child) in children.iter().enumerate() {
+                        print_node(
+                            records,
+                            by_parent,
+                            child,
+                            &child_prefix,
+                            i == children.len() - 1,
+                        );
+                    }
+                }
+                if roots.is_empty() {
+                    // All records have parents in a broken cycle: print flat.
+                    for r in records {
+                        println!(
+                            "{}  {:11}  parent={:11}  name={}",
+                            r.child_id,
+                            format!("{:?}", r.state).to_lowercase(),
+                            r.parent_id.as_deref().unwrap_or("-"),
+                            r.configuration.name
+                        );
+                    }
+                } else {
+                    for (i, root) in roots.iter().enumerate() {
+                        print_node(&records, &by_parent, root, "", i == roots.len() - 1);
+                    }
+                }
+                return Ok(0);
+            }
             for r in records {
                 println!(
                     "{}  {:11}  parent={:11}  queue={}  events={}  name={}",
