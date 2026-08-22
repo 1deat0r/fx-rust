@@ -46,7 +46,7 @@ pub async fn run_subagent_named(
         mode: Some(crate::subagent_domain::Mode::OneOff),
         prompt: Some(prompt.clone()),
         model: model.clone(),
-        permission_mode: permission_mode,
+        permission_mode,
         ..Default::default()
     };
     let validated =
