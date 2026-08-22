@@ -67,30 +67,26 @@ code with a single keystroke or fully hands-free.
 ## Pending (targeted — full 1:1 mandate)
 
 fxrs is a **1:1 full Rust re-write** of upstream fx: every subsystem, command,
-tool, protocol, screen, and binding ships upstream is being rebuilt in Rust
-with behavioral equivalence. Phase 3 (execution, terminal, recovery) is complete: background execution +
-supervisor, native-PTY/tmux terminal sessions + `terminal exec` +
-`browser_terminal`, the terminal takeover decision layer, the model-response
-recovery policy (wired into the agent retry loop), usage recovery (durable
-marker registry + collector), and the local executor (direct read-only +
-approved shell). Phase 4 (subagent & modes) is well underway: modes/mods registries
-(builtin ask/code modes + read-only tool policy, `fxrs modes`), the subagent
-domain model, the control store + manager state machine, operation ids,
-authority admission, the executor (`fxrs subagent run` runs pending work
-items through a nested agent under the child's own model/permission/tool
-authority), and relationship queries (`fxrs subagent list --tree`). Still
-ahead: subagent approval registry/persistence, communication store/manager,
-parent delivery projection, resume admission, subagent UI, then the TUI
-(Phase 5), ACP, SDK bindings, OAuth stack, GitHub flows, and the
-`gh`/`review`/`capture`/`one-off` CLI commands.
+tool, protocol, screen, and binding upstream ships is being rebuilt in Rust
+with behavioral equivalence. Phases 1–6 are complete (core backend,
+protocols & auth, execution/terminal/recovery, subagent & modes, the TUI,
+and GitHub/advanced CLI). Phase 7 (ACP + SDK) is landed: `fxrs acp` is a
+newline-delimited JSON-RPC stdio server and `sdk/` is a dependency-free JS
+binding (`libfx`) with a 14-test integration suite, an xterm adapter, and a
+runnable example, all exercising the real binary. Phase 8 (hardening: e2e,
+benchmarks, AB parity harness) is next. Remaining known gaps are tracked in
+the [ROADMAP.md](ROADMAP.md) parity matrix — the largest are the upstream
+WASM/NAPI cores (the ACP server is the parity boundary for the SDK today)
+and MCP OAuth (DCR) / elicitation / MRTR.
 See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
 
-Working Rust port of the fx agent core + CLI surface (~5.8K LOC so far,
-upstream is ~688K LOC across 549 Zig files). **Project mandate: a 1:1 full
-Rust re-write** — see [ROADMAP.md](ROADMAP.md) for the complete upstream
-surface inventory, the parity matrix, and the phased plan to full parity.
+Working Rust port of the fx agent core + CLI + TUI + ACP + SDK surface
+(~40K Rust LOC across 100 source files, 384 tests green). **Project
+mandate: a 1:1 full Rust re-write** — see [ROADMAP.md](ROADMAP.md) for the
+complete upstream surface inventory, the parity matrix, and the phased plan
+to full parity.
 
 Implemented so far:
 
