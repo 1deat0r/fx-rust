@@ -102,6 +102,7 @@ pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
     "semantic_search",
     "memory",
     "skill",
+    "read_tool_result",
 ];
 
 /// The built-in registry: exact upstream `builtins/modes.zig` order.

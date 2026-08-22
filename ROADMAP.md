@@ -97,7 +97,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | subagent | 🟡 minimal |
 | mcp (stdio / streamable-http / http-sse) | ✅ |
 | semantic_search | ✅ (BM25-lite, P1) |
-| read_tool_result (session) | ❌ |
+| read_tool_result (session) | ✅ | **`src/result_store.rs` + `src/tools/read_tool_result.rs`**: durable tool-result store (`~/.fx/results/tool_results/result-{tool}-{call8}-{content8}.txt` handles, deterministic SHA-256), large results (>16 KB) stored with preview envelope + `Use read_tool_result` hint, byte-range (1-based, UTF-8 boundary-safe, ≤64 KB) + literal query reads, agent loop wired (large tool outputs auto-store); tool is read-only policy |
 | background_process (shell) | ✅ (supervise/tree/stop-tree) |
 | terminal · browser_terminal | ✅ (native PTY + tmux; create/list/exec/send/read/resize/stop + browser_terminal exec) |
 | web content / html_to_markdown / http_fetch / url_policy (as tools) | ❌ (internal subset) |

@@ -32,6 +32,7 @@ pub mod mods;
 pub mod operation_id;
 pub mod permissions;
 pub mod providers;
+pub mod result_store;
 pub mod sessions;
 pub mod settings_catalog;
 pub mod shell_command;

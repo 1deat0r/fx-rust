@@ -15,6 +15,7 @@ pub mod filesystem;
 pub mod html;
 pub mod memory;
 pub mod question;
+pub mod read_tool_result;
 pub mod search;
 pub mod skill;
 pub mod subagent;
@@ -127,6 +128,7 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
         "web_fetch" => web::web_fetch(ctx, args).await,
         "web_search" => web::web_search(ctx, args).await,
         "semantic_search" => search::semantic_search(ctx, args),
+        "read_tool_result" => read_tool_result::call(ctx, args),
         "ask_user_question" => question::ask_user_question(ctx, args),
         "skill" => skill::skill(ctx, args),
         "install_skill" => skill::install_skill(ctx, args),
@@ -625,6 +627,7 @@ pub fn schemas() -> Vec<Value> {
                 }
             }
         }),
+        read_tool_result::schema(),
         json!({
             "type": "function",
             "function": {

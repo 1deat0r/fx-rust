@@ -651,7 +651,19 @@ pub async fn run(
             };
             let result_text = result.unwrap_or_else(tools::err_result);
             human.tool_result(&call.name, &result_text.to_string());
+            // Large tool results are persisted to the durable result store
+            // and the model receives a bounded preview + read_tool_result
+            // handle instead (upstream result_store.prepare).
             let result_str = result_text.to_string();
+            let prepared = crate::result_store::prepare(
+                Some(&crate::result_store::result_dir()),
+                &call.id,
+                &call.name,
+                result_str.as_bytes(),
+                config.max_tool_result_bytes,
+            );
+            let result_text = serde_json::Value::String(prepared.model_output.clone());
+            let result_str = prepared.model_output;
             let result_ok = !result_str.contains("\"error\"");
             exec_memory.record(
                 &call.name,
