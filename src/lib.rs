@@ -55,6 +55,7 @@ pub mod terminal_recovery;
 pub mod terminal_takeover;
 pub mod tool_prep;
 pub mod tools;
+pub mod tui;
 pub mod ui;
 mod upgrade;
 pub mod usage;

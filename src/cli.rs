@@ -823,6 +823,19 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             server.serve_stdio(&cwd()).await?;
             Ok(0)
         }
+        Some("tui") => {
+            // Phase 5 full-screen TUI (alternate screen + raw mode).
+            let cfg = Arc::new(config::resolve(&cwd())?);
+            let store = SessionStore::new()?;
+            let resume = args.clone().find(|a| a.as_str() == "--resume").and_then(|_| {
+                args.clone()
+                    .skip_while(|a| a.as_str() != "--resume")
+                    .nth(1)
+                    .cloned()
+            });
+            crate::tui::run_tui(cfg, &store, resume, false).await?;
+            Ok(0)
+        }
         Some("gh") => {
             let rest: Vec<String> = args.map(|s| s.to_string()).collect();
             run_gh(&rest).await

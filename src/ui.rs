@@ -143,6 +143,14 @@ pub async fn run_interactive(
     resume: Option<String>,
     trace: bool,
 ) -> Result<()> {
+    // Phase 5 TUI: opt in with FXRS_TUI=1 (the `fxrs tui` command arms it
+    // directly). The REPL remains the default stdout form factor.
+    if std::env::var("FXRS_TUI")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return crate::tui::run_tui(config, store, resume, trace).await;
+    }
     let human = InteractiveHuman {
         quiet: false,
         trace,
@@ -691,4 +699,181 @@ fn short_id(id: &str) -> String {
 #[allow(dead_code)]
 fn _tool_use_json(t: &ToolUse) -> String {
     serde_json::json!({ "id": t.id, "name": t.name, "arguments": t.arguments }).to_string()
+}
+
+// ---------------------------------------------------------------- TUI helpers
+//
+// The full-screen TUI reuses the interactive command logic by asking for a
+// rendered string instead of println. These mirrors keep the two UIs honest.
+
+/// Rendered output for `/background <args>` (also `fxrs background`).
+pub fn render_slash_background(_config: &Config, arg: Option<&str>) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mut store = match crate::background::BackgroundStore::open() {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(out, "background store error: {e:#}");
+            return out;
+        }
+    };
+    let (sub, id_arg) = match arg.unwrap_or("").split_once(char::is_whitespace) {
+        Some((s, rest)) => (s, rest.trim().to_string()),
+        None => (arg.unwrap_or("list"), String::new()),
+    };
+    let id: Option<&str> = if id_arg.is_empty() {
+        None
+    } else {
+        Some(id_arg.as_str())
+    };
+    match (sub, id) {
+        ("list" | "l", _) | ("get" | "stop" | "supervise" | "tree" | "stop-tree", None) => {
+            match sub {
+                "list" | "l" => {
+                    let records = store.list().to_vec();
+                    if records.is_empty() {
+                        let _ = writeln!(out, "no background processes");
+                    } else {
+                        let _ = writeln!(out, "{}", crate::background::render_table(&records));
+                    }
+                }
+                "supervise" => {
+                    if store.list().is_empty() {
+                        let _ = writeln!(out, "no background processes");
+                    } else {
+                        let _ = writeln!(out, "{}", crate::background::render_supervise(&store.supervise()));
+                    }
+                }
+                _ => {
+                    let _ = writeln!(out, "usage: /background {sub} <id>");
+                }
+            }
+        }
+        ("get", Some(id)) => match store.log_text(id, 16 * 1024, None) {
+            Ok(text) => {
+                let _ = writeln!(out, "{text}");
+            }
+            Err(e) => {
+                let _ = writeln!(out, "{e:#}");
+            }
+        },
+        ("tree", Some(id)) => match store.get(id) {
+            Some(record) => {
+                let table = crate::background::process_table();
+                let _ = writeln!(out, "{}", crate::background::render_tree(record, &table));
+            }
+            None => {
+                let _ = writeln!(out, "unknown background process id `{id}`");
+            }
+        },
+        ("stop", Some(id)) => match store.stop(id, 5000) {
+            Ok(r) => {
+                let _ = writeln!(out, "stopped {} (pid {})", r.id, r.pid);
+            }
+            Err(e) => {
+                let _ = writeln!(out, "{e:#}");
+            }
+        },
+        ("stop-tree" | "stop_tree", Some(id)) => match store.stop_tree(id, 5000) {
+            Ok(r) => {
+                let _ = writeln!(out, "stopped {} (pid {}) and descendants", r.id, r.pid);
+            }
+            Err(e) => {
+                let _ = writeln!(out, "{e:#}");
+            }
+        },
+        (other, _) => {
+            let _ = writeln!(
+                out,
+                "unknown background subcommand `{other}` (list | supervise | tree <id> | get <id> | stop <id> | stop-tree <id>)"
+            );
+        }
+    }
+    out
+}
+
+/// Rendered output for `/terminal <args>`.
+pub fn render_slash_terminal(arg: Option<&str>) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mut store = match crate::terminal::TerminalStore::open() {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(out, "terminal store error: {e:#}");
+            return out;
+        }
+    };
+    let (sub, id_arg) = match arg.unwrap_or("").split_once(char::is_whitespace) {
+        Some((s, rest)) => (s, rest.trim().to_string()),
+        None => (arg.unwrap_or("list"), String::new()),
+    };
+    let id: Option<&str> = if id_arg.is_empty() {
+        None
+    } else {
+        Some(id_arg.as_str())
+    };
+    match (sub, id) {
+        ("list" | "l", _) => {
+            let records = store.list().to_vec();
+            if records.is_empty() {
+                let _ = writeln!(out, "no terminal sessions");
+            } else {
+                let _ = writeln!(out, "{}", crate::terminal::render_table(&records));
+            }
+        }
+        ("get" | "read", Some(id)) => match store.read(id, 200, 16 * 1024, false, false) {
+            Ok(text) => {
+                let _ = writeln!(out, "{text}");
+            }
+            Err(e) => {
+                let _ = writeln!(out, "{e:#}");
+            }
+        },
+        ("send", Some(id)) => {
+            let rest = arg.unwrap_or("");
+            let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+            if parts.len() < 2 || parts[1].trim().is_empty() {
+                let _ = writeln!(out, "usage: /terminal send <id> <text>");
+            } else if let Err(e) = store.send(id, parts[1].trim(), true) {
+                let _ = writeln!(out, "{e:#}");
+            } else {
+                let _ = writeln!(out, "sent to {id}");
+            }
+        }
+        ("stop", Some(id)) => match store.stop(id) {
+            Ok(r) => {
+                let _ = writeln!(out, "stopped {} (pid {})", r.id, r.pid);
+            }
+            Err(e) => {
+                let _ = writeln!(out, "{e:#}");
+            }
+        },
+        (other, _) => {
+            let _ = writeln!(
+                out,
+                "unknown terminal subcommand `{other}` (list | get <id> | send <id> <text> | stop <id>)"
+            );
+        }
+    }
+    out
+}
+
+/// Rendered output for `/skills <args>`.
+pub fn render_slash_skills(workspace: &std::path::Path, arg: Option<&str>) -> String {
+    use std::fmt::Write as _;
+    let line = arg.unwrap_or_default();
+    let command = crate::skills::commands::parse_command(line);
+    let mut out = String::new();
+    match crate::skills::commands::execute_command(workspace, &command) {
+        Ok(result) => {
+            let _ = write!(out, "{}", result.render());
+            if !result.render().ends_with('\n') {
+                let _ = writeln!(out);
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(out, "fxrs skills: {e:#}");
+        }
+    }
+    out
 }
