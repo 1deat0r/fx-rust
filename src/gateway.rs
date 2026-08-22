@@ -573,6 +573,128 @@ pub fn context_limits_for(
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Credits / balance (upstream `credits_path` + `fetchCredits`)
+// ---------------------------------------------------------------------------
+
+pub const CREDITS_PATH: &str = "/coding-agent/v1/credits";
+
+/// Snapshot of the AI Gateway credit balance (upstream `CreditsSnapshot`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreditsSnapshot {
+    pub balance: Option<String>,
+    pub used: Option<String>,
+    pub plan: Option<String>,
+    pub raw_json: Option<String>,
+    pub err_message: Option<String>,
+}
+
+impl CreditsSnapshot {
+    pub fn is_error(&self) -> bool {
+        self.err_message.is_some()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreditsResult {
+    Loaded(CreditsSnapshot),
+    Failed {
+        failure: Failure,
+    },
+}
+
+/// The credits URL. Honors `FX_E2E_GATEWAY_CREDITS_URL` and
+/// `FX_GATEWAY_BASE_URL`, but only loopback http overrides are trusted
+/// (mirrors `catalog_url`).
+pub fn credits_url() -> String {
+    if let Ok(url) = std::env::var("FX_E2E_GATEWAY_CREDITS_URL") {
+        if is_loopback_http_url(&url) {
+            return url;
+        }
+    }
+    if let Ok(base) = std::env::var(BASE_URL_ENV) {
+        if is_loopback_http_url(&base) {
+            return format!("{base}{CREDITS_PATH}");
+        }
+    }
+    format!("{DEFAULT_MODEL_CATALOG_BASE_URL}{CREDITS_PATH}")
+}
+
+/// Parse the credits JSON `{balance, used, plan}` (all strings; upstream
+/// `creditsSnapshotFromJsonValue`).
+pub fn parse_credits(json: &str) -> Result<CreditsSnapshot> {
+    let value: Value = serde_json::from_str(json).context("parse credits json")?;
+    let obj = value.as_object().ok_or_else(|| anyhow::anyhow!("credits response must be an object"))?;
+    let string_field = |name: &str| -> Option<String> {
+        obj.get(name).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+    Ok(CreditsSnapshot {
+        balance: string_field("balance"),
+        used: string_field("used"),
+        plan: string_field("plan"),
+        raw_json: Some(json.to_string()),
+        err_message: None,
+    })
+}
+
+/// Fetch the gateway credits balance (`GET {base}/coding-agent/v1/credits`).
+/// Unlike the model catalog there is no anonymous fallback: credits require a
+/// credential, so auth/rate-limit failures surface directly.
+pub fn fetch_credits(api_key: Option<&str>, team: Option<&str>) -> CreditsResult {
+    let url = credits_url();
+    let mut team_query = None;
+    // A team-selecting credential (fx login) must name the team in the query
+    // value: `/v1/credits` reads `teamId` and ignores the header (the reverse
+    // of the inference endpoint).
+    if let Some(team) = team {
+        if valid_gateway_team(team) {
+            team_query = Some(format!("?teamId={}", encode_team(team)));
+        }
+    }
+    let final_url = match team_query {
+        Some(q) => format!("{url}{q}"),
+        None => url,
+    };
+    match fetch_body(&final_url, api_key, None) {
+        Ok((200, body)) => match parse_credits(&String::from_utf8_lossy(&body)) {
+            Ok(snapshot) => CreditsResult::Loaded(snapshot),
+            Err(_) => CreditsResult::Failed {
+                failure: Failure {
+                    category: FailureCategory::MalformedResponse,
+                    http_status: Some(200),
+                    retryable: false,
+                },
+            },
+        },
+        Ok((status, _)) => CreditsResult::Failed {
+            failure: failure_for_http_status(status),
+        },
+        Err(_) => CreditsResult::Failed {
+            failure: Failure {
+                category: FailureCategory::Transport,
+                retryable: true,
+                http_status: None,
+            },
+        },
+    }
+}
+
+fn valid_gateway_team(team: &str) -> bool {
+    // Upstream `validGatewayTeam`: url-safe team id (letters, digits, dash,
+    // underscore); rejects anything that cannot round-trip in a query.
+    !team.is_empty()
+        && team.len() < 512
+        && team
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
+}
+
+fn encode_team(team: &str) -> String {
+    // Minimal query encoding for the safe set upstream allows.
+    team.replace(' ', "%20")
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,4 +774,47 @@ mod tests {
             "http://127.0.0.1:9999/coding-agent/v1/models"
         );
     }
+    #[test]
+    fn parses_credits_snapshot() {
+        let snap = parse_credits(r#"{"balance":"123.45","used":"67","plan":"hobby"}"#).unwrap();
+        assert_eq!(snap.balance.as_deref(), Some("123.45"));
+        assert_eq!(snap.used.as_deref(), Some("67"));
+        assert_eq!(snap.plan.as_deref(), Some("hobby"));
+        assert!(!snap.is_error());
+
+        let empty = parse_credits("{}").unwrap();
+        assert_eq!(empty.balance, None);
+        assert_eq!(empty.plan, None);
+
+        assert!(parse_credits("[1,2]").is_err());
+        assert!(parse_credits("not json").is_err());
+    }
+
+    #[test]
+    fn credits_url_is_loopback_trusted() {
+        let _g = crate::test_env::lock().lock().unwrap();
+        std::env::remove_var("FX_E2E_GATEWAY_CREDITS_URL");
+        std::env::set_var("FX_GATEWAY_BASE_URL", "https://gateway.example.com");
+        let url = credits_url();
+        // Non-loopback base is not trusted -> default gateway.
+        assert!(url.starts_with("https://ai-gateway.vercel.sh"), "url: {url}");
+        std::env::set_var("FX_GATEWAY_BASE_URL", "http://127.0.0.1:8787");
+        let url = credits_url();
+        assert_eq!(url, "http://127.0.0.1:8787/coding-agent/v1/credits");
+        std::env::set_var("FX_E2E_GATEWAY_CREDITS_URL", "http://localhost:9999/credits");
+        let url = credits_url();
+        assert_eq!(url, "http://localhost:9999/credits");
+        std::env::remove_var("FX_E2E_GATEWAY_CREDITS_URL");
+        std::env::remove_var("FX_GATEWAY_BASE_URL");
+        drop(_g);
+    }
+
+    #[test]
+    fn valid_teams_are_url_safe() {
+        assert!(valid_gateway_team("team_acme-42"));
+        assert!(!valid_gateway_team(""));
+        assert!(!valid_gateway_team("a b/../../x"));
+        assert_eq!(encode_team("team 1"), "team%201");
+    }
+
 }

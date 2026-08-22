@@ -798,6 +798,22 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             );
             Ok(0)
         }
+        Some("pr") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            return run_pr_command(&rest).await;
+        }
+        Some("issue") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            return run_issue_command(&rest).await;
+        }
+        Some("credits") | Some("balance") => {
+            let wants_json = args.clone().any(|a| a == "--json");
+            run_credits(wants_json).await
+        }
+        Some("provider") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            return run_provider(&rest).await;
+        }
         Some("skills") => {
             let sub_args: Vec<String> = args.clone().cloned().collect();
             return cmd_skills(&sub_args, &cwd()).await;
@@ -2354,6 +2370,205 @@ async fn run_gh(args: &[String]) -> Result<i32> {
         _ => bail!("usage: fxrs gh snapshot | gh pr create <title>|<body> | gh issue create <title>|<body> | gh feedback"),
     }
 }
+
+// ------------------------------------------------------------------ pr / issue / credits / provider
+
+/// Draft the assistant-authored payload for `pr`/`issue` by running one
+/// one-shot agent turn with the upstream prompt contract. Returns the
+/// assistant's final text.
+async fn run_draft_agent(prompt: &str) -> Result<String> {
+    let cfg = Arc::new(config::resolve(&cwd())?);
+    let store = SessionStore::new()?;
+    let human = QuietHuman;
+    let out: AgentOutput = crate::agent::run(
+        AgentRequest {
+            prompt: Some(prompt.to_string()),
+            system: None,
+            interactive: false,
+            resume: None,
+            messages: Vec::new(),
+        },
+        cfg,
+        &human,
+        &store,
+    )
+    .await?;
+    if let Some(e) = &out.error {
+        bail!("draft failed: {e}");
+    }
+    let last_text = out
+        .transcript
+        .iter()
+        .rev()
+        .find_map(|m| m.last_text().map(|s| s.to_string()))
+        .unwrap_or_default();
+    if last_text.trim().is_empty() {
+        bail!("draft failed: model produced no content");
+    }
+    Ok(last_text)
+}
+
+/// `fxrs pr [--auto] [--create] [context]` — upstream `pr` top-level
+/// command: draft (agent-authored from the git snapshot) or publish.
+async fn run_pr_command(args: &[String]) -> Result<i32> {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("usage: fxrs pr [--auto] [--create] [context]");
+        return Ok(0);
+    }
+    // gh-style subcommand passthrough (`fxrs pr create --draft TEXT`, ...).
+    if args
+        .iter()
+        .any(|a| a == "create" || a == "draft" || a == "publish" || a == "prompt")
+    {
+        let mut gh_args = vec!["pr".to_string()];
+        gh_args.extend(args.iter().cloned());
+        return run_gh(&gh_args).await;
+    }
+    let publish = args.iter().any(|a| a == "--create" || a == "--publish");
+    let context = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let workspace = cwd();
+    let prompt =
+        crate::github::build_prompt(&crate::github::Workflow::PullRequest, "en", &context, &workspace)?;
+    let text = run_draft_agent(&prompt).await?;
+    let draft = crate::github::parse_draft(&text)?;
+    if !publish {
+        println!("title: {}", draft.title);
+        println!("body:\n{}", draft.body);
+        println!("\n[publish with `fxrs pr --create`]");
+        return Ok(0);
+    }
+    let result = crate::github::publish(&crate::github::Workflow::PullRequest, &draft);
+    if result.ok {
+        println!("{}", result.text);
+        Ok(0)
+    } else {
+        bail!("pr publish failed: {}", result.text)
+    }
+}
+
+/// `fxrs issue [--auto] [--create] [context]` — upstream `issue`
+/// top-level command: draft or publish a GitHub issue.
+async fn run_issue_command(args: &[String]) -> Result<i32> {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("usage: fxrs issue [--auto] [--create] [context]");
+        return Ok(0);
+    }
+    if args
+        .iter()
+        .any(|a| a == "create" || a == "draft" || a == "publish" || a == "prompt")
+    {
+        let mut gh_args = vec!["issue".to_string()];
+        gh_args.extend(args.iter().cloned());
+        return run_gh(&gh_args).await;
+    }
+    let publish = args.iter().any(|a| a == "--create" || a == "--publish");
+    let context = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let workspace = cwd();
+    let prompt =
+        crate::github::build_prompt(&crate::github::Workflow::Issue, "en", &context, &workspace)?;
+    let text = run_draft_agent(&prompt).await?;
+    let draft = crate::github::parse_draft(&text)?;
+    if !publish {
+        println!("title: {}", draft.title);
+        println!("body:\n{}", draft.body);
+        println!("\n[publish with `fxrs issue --create`]");
+        return Ok(0);
+    }
+    let result = crate::github::publish(&crate::github::Workflow::Issue, &draft);
+    if result.ok {
+        println!("{}", result.text);
+        Ok(0)
+    } else {
+        bail!("issue publish failed: {}", result.text)
+    }
+}
+
+/// `fxrs credits|balance [--json]` — upstream `credits` top-level command:
+/// show the AI Gateway credit balance.
+async fn run_credits(wants_json: bool) -> Result<i32> {
+    let store = crate::auth::load()?;
+    let (key, _base) = crate::auth::resolve_key("gateway", &store);
+    let key = key.filter(|k| !k.is_empty());
+    match crate::gateway::fetch_credits(key.as_deref(), None) {
+        crate::gateway::CreditsResult::Loaded(snapshot) => {
+            if let Some(err) = &snapshot.err_message {
+                eprintln!("fxrs credits: {err}");
+                return Ok(1);
+            }
+            if wants_json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "balance": snapshot.balance,
+                        "used": snapshot.used,
+                        "plan": snapshot.plan,
+                    }))?
+                );
+            } else {
+                println!("credits: {}", snapshot.balance.as_deref().unwrap_or("unknown"));
+                if let Some(used) = &snapshot.used {
+                    println!("used: {used}");
+                }
+                if let Some(plan) = &snapshot.plan {
+                    println!("plan: {plan}");
+                }
+            }
+            Ok(0)
+        }
+        crate::gateway::CreditsResult::Failed { failure } => {
+            eprintln!(
+                "fxrs credits: failed to fetch credits ({:?}){}\nset FX_GATEWAY_API_KEY or run `fxrs login` to authenticate",
+                failure.category,
+                failure
+                    .http_status
+                    .map(|s| format!(" (HTTP {s})"))
+                    .unwrap_or_default()
+            );
+            Ok(1)
+        }
+    }
+}
+
+/// `fxrs provider <gateway|anthropic|openai>` — upstream `provider`
+/// top-level command: choose the model provider. Prints the active provider
+/// without an argument.
+async fn run_provider(args: &[String]) -> Result<i32> {
+    let kind_arg = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str());
+    match kind_arg {
+        None => {
+            let cfg = config::resolve(&cwd())?;
+            let resolved = crate::providers::resolve_provider(&cfg)?;
+            println!("{}", resolved.provider.name());
+            println!("model: {}", cfg.model);
+            println!("set with `fxrs provider <gateway|anthropic|openai>` or FX_PROVIDER");
+            Ok(0)
+        }
+        Some(kind) => {
+            let normalized = match kind {
+                "gateway" => "gateway",
+                "anthropic" => "anthropic",
+                "openai" | "local" => "openai",
+                other => bail!(
+                    "unknown provider: {other} (expected gateway, anthropic, or openai)"
+                ),
+            };
+            println!("provider: {normalized}");
+            println!("set FX_PROVIDER={normalized} (or persist via ~/.fx/settings.json)");
+            Ok(0)
+        }
+    }
+}
+
 
 // ------------------------------------------------------------------ skills
 
