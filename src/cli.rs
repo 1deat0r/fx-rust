@@ -741,6 +741,10 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let sub_args: Vec<String> = args.clone().cloned().collect();
             return cmd_subagent(&sub_args).await;
         }
+        Some("gh") => {
+            let rest: Vec<String> = args.map(|s| s.to_string()).collect();
+            run_gh(&rest).await
+        }
         Some("modes") => {
             let cfg = config::resolve(&cwd())?;
             let registry = crate::modes::builtin_registry();
@@ -2200,3 +2204,142 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
 
 #[allow(dead_code)]
 fn _p(_: &Path) {}
+
+// ------------------------------------------------------------------ gh
+
+/// `fxrs gh <pr|issue|snapshot> ...` — upstream `core/github/*` surface.
+async fn run_gh(args: &[String]) -> Result<i32> {
+    let workspace = cwd();
+    let sub = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
+    match sub {
+        None | Some("snapshot") | Some("status") => {
+            let snap = crate::github::git_snapshot(&workspace);
+            if args.iter().any(|a| a == "--json") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "in_git_repo": snap.in_git_repo,
+                        "text": snap.text,
+                    }))?
+                );
+            } else {
+                println!("{}", snap.text);
+            }
+            Ok(0)
+        }
+        Some("pr") => {
+            let action = args
+                .iter()
+                .position(|a| a == "pr")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            match action {
+                Some("draft" | "create" | "publish") => {
+                    let draft_text = args
+                        .iter()
+                        .position(|a| a == "--draft")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            // Rest after `pr create` is the draft text.
+                            let pos = args.iter().position(|a| a == "create")?;
+                            let rest = &args[pos + 1..];
+                            if rest.is_empty() {
+                                None
+                            } else {
+                                Some(rest.join(" "))
+                            }
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("usage: fxrs gh pr create [--draft TEXT] <TEXT>"))?;
+                    let draft = crate::github::parse_draft(&draft_text)?;
+                    let _ = action;
+                    if args.iter().any(|a| a == "--no-publish") {
+                        println!("title: {}", draft.title);
+                        println!("body:\n{}", draft.body);
+                        return Ok(0);
+                    }
+                    let result = crate::github::publish(&crate::github::Workflow::PullRequest, &draft);
+                    if result.ok {
+                        println!("{}", result.text);
+                        Ok(0)
+                    } else {
+                        bail!("{}{}", "gh publish failed: ", result.text)
+                    }
+                }
+                Some("prompt") => {
+                    let context = args
+                        .iter()
+                        .position(|a| a == "--context")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let prompt =
+                        crate::github::build_prompt(&crate::github::Workflow::PullRequest, "en", context, &workspace)?;
+                    println!("{prompt}");
+                    Ok(0)
+                }
+                _ => bail!("usage: fxrs gh pr create [--draft TEXT] <TEXT> | pr prompt [--context TEXT]"),
+            }
+        }
+        Some("issue") => {
+            let action = args
+                .iter()
+                .position(|a| a == "issue")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            match action {
+                Some("draft" | "create" | "publish") => {
+                    let draft_text = args
+                        .iter()
+                        .position(|a| a == "--draft")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            let pos = args.iter().position(|a| a == "create")?;
+                            let rest = &args[pos + 1..];
+                            if rest.is_empty() {
+                                None
+                            } else {
+                                Some(rest.join(" "))
+                            }
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("usage: fxrs gh issue create [--draft TEXT] <TEXT>"))?;
+                    let draft = crate::github::parse_draft(&draft_text)?;
+                    if args.iter().any(|a| a == "--no-publish") {
+                        println!("title: {}", draft.title);
+                        println!("body:\n{}", draft.body);
+                        return Ok(0);
+                    }
+                    let result = crate::github::publish(&crate::github::Workflow::Issue, &draft);
+                    if result.ok {
+                        println!("{}", result.text);
+                        Ok(0)
+                    } else {
+                        bail!("gh publish failed: {}", result.text)
+                    }
+                }
+                Some("prompt") => {
+                    let context = args
+                        .iter()
+                        .position(|a| a == "--context")
+                        .and_then(|i| args.get(i + 1))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let prompt =
+                        crate::github::build_prompt(&crate::github::Workflow::Issue, "en", context, &workspace)?;
+                    println!("{prompt}");
+                    Ok(0)
+                }
+                _ => bail!("usage: fxrs gh issue create [--draft TEXT] <TEXT> | issue prompt [--context TEXT]"),
+            }
+        }
+        Some("feedback") => {
+            println!("{}", crate::github::feedback_url);
+            Ok(0)
+        }
+        _ => bail!("usage: fxrs gh snapshot | gh pr create <title>|<body> | gh issue create <title>|<body> | gh feedback"),
+    }
+}

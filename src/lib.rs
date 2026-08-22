@@ -20,6 +20,7 @@ pub mod context;
 pub mod exec_memory;
 pub mod executor;
 pub mod gateway;
+pub mod github;
 pub mod history;
 pub mod hooks;
 pub mod mcp;

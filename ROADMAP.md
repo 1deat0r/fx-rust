@@ -72,7 +72,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Output/transcript presentation | `core/output/*` | diff, activity, transcript presentation/release, worker status |
 | Workspace runtime | `core/workspace/*` (21 files) | file index, change tracker, grep, glob, path completion, access, menus, diagnostics, metrics, record tape |
 | Agent runtime full | `core/agent/*` | worker runtime, execution memory, question prompt/answer, tool preparation, presentation |
-| GitHub | `core/github/*` (3 files) | git context, publish (pr/issue), workflows |
+| GitHub | `core/github/*` (3 files) | ✅ **`src/github.rs` + `fxrs gh`** — git snapshot (`branch/status/log/diff stats`, upstream text shape), draft parse (title = first line, body = rest), `gh` CLI publish (`pr create`/`issue create`, `--no-publish` dry-run), PR/issue prompt contracts (upstream section mandates, NotGitRepository guard), `fxrs gh feedback` (fx.sh endpoint) |
 | Usage reporting | `core/session/profile_usage*`, `usage*.zig`, `core/cli/usage_cli_runtime.zig` | usage.jsonl + `fxrs usage` landed (P1); ✅ **usage recovery** landed (P3): `~/.fx/usage_recovery/` marker registry (`v1 <ts>\n`, 0700/0600, validation, 512 cap), `collect_from_home_conservative` (facts/incidents/pending/unknown_pending), agent checkpoint seam (mark on save, clear when ledger covers claims), `fxrs doctor` + `fxrs usage` surfacing; reports, usage menu pending |
 | Feedback | `core/feedback/runtime.zig` | |
 | Notifications + sounds | `core/notifications/*` | contract + bundled sounds |
