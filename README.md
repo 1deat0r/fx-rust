@@ -68,11 +68,15 @@ code with a single keystroke or fully hands-free.
 
 fxrs is a **1:1 full Rust re-write** of upstream fx: every subsystem, command,
 tool, protocol, screen, and binding ships upstream is being rebuilt in Rust
-with behavioral equivalence. Still pending: the full TUI render engine +
-input composer, ACP server, NAPI/WASM bindings + JS SDK, OAuth/auth stack,
-MCP elicitation / OAuth + keychain, per-model gateway capabilities,
-the full subagent subsystem, background/terminal execution, usage reporting,
-GitHub `pr`/`issue` flows, and the `gh`/`review`/`capture`/`one-off` CLI commands.
+with behavioral equivalence. Phase 3 (execution, terminal, recovery) is complete: background execution +
+supervisor, native-PTY/tmux terminal sessions + `terminal exec` +
+`browser_terminal`, the terminal takeover decision layer, the model-response
+recovery policy (wired into the agent retry loop), usage recovery (durable
+marker registry + collector), and the local executor (direct read-only +
+approved shell). Still pending: the full TUI render engine + input composer,
+the full subagent subsystem, modes/mods, ACP server, NAPI/WASM bindings +
+JS SDK, OAuth/auth stack, MCP elicitation / OAuth + keychain, GitHub
+`pr`/`issue` flows, and the `gh`/`review`/`capture`/`one-off` CLI commands.
 See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
