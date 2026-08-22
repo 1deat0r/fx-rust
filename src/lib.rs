@@ -18,6 +18,7 @@ pub mod cli;
 pub mod config;
 pub mod context;
 pub mod exec_memory;
+pub mod executor;
 pub mod gateway;
 pub mod history;
 pub mod hooks;
