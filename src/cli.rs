@@ -2232,6 +2232,7 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
     let mut prompt_parts: Vec<String> = vec![];
     let mut system: Option<String> = None;
     let mut messages: Vec<String> = vec![];
+    let mut images: Vec<crate::providers::ImageInput> = vec![];
 
     let mut i = 0;
     while i < args.len() {
@@ -2254,8 +2255,18 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
             "--json" => {
                 // accepted for fx CLI compat; output is already structured-ish
             }
+            "--image" => {
+                i += 1;
+                if let Some(path) = args.get(i) {
+                    if let Ok(img) = load_image_input(Path::new(path)) {
+                        images.push(img);
+                    } else {
+                        eprintln!("fxrs ask: could not read image {path}; ignoring");
+                    }
+                }
+            }
             "--help" | "-h" => {
-                println!("usage: fxrs ask [--resume <id>] [--system <s>] [-m <msg>] <prompt>");
+                println!("usage: fxrs ask [--resume <id>] [--system <s>] [-m <msg>] [--image PATH] <prompt>");
                 return Ok(0);
             }
             _ => prompt_parts.push(a.clone()),
@@ -2292,6 +2303,7 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
         interactive: false,
         resume,
         messages,
+        images,
     };
     let out: AgentOutput = crate::agent::run(req, cfg.clone(), &human, &store).await?;
     if let Some(e) = &out.error {
@@ -2307,6 +2319,30 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
     );
     Ok(0)
 }
+
+#[allow(dead_code)]
+fn load_image_input(path: &Path) -> Result<crate::providers::ImageInput> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    if buf.len() > 32 * 1024 * 1024 {
+        bail!("image too large (max 32 MiB): {}", path.display());
+    }
+    let media_type = match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        other => bail!("unsupported image extension `{other}` (png, jpg/jpeg, gif, webp)"),
+    };
+    Ok(crate::providers::ImageInput {
+        media_type: media_type.to_string(),
+        data_base64: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buf),
+    })
+}
+
 
 #[allow(dead_code)]
 fn _p(_: &Path) {}
@@ -2466,6 +2502,7 @@ async fn run_draft_agent(prompt: &str) -> Result<String> {
             interactive: false,
             resume: None,
             messages: Vec::new(),
+            images: Vec::new(),
         },
         cfg,
         &human,
@@ -2708,5 +2745,40 @@ async fn cmd_skills(args: &[String], workspace: &Path) -> Result<i32> {
             eprintln!("fxrs skills: {e:#}");
             Ok(1)
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_input_loads_and_detects_media_type() {
+        let path = Path::new("/tmp/fxrs-tiny.png");
+        if !path.exists() {
+            eprintln!("fixture missing; skipping");
+            return;
+        }
+        let img = load_image_input(path).unwrap();
+        assert_eq!(img.media_type, "image/png");
+        assert!(!img.data_base64.is_empty());
+        // round-trips to the original bytes
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data_base64).unwrap();
+        assert!(decoded.len() > 0);
+        assert!(decoded.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn image_input_rejects_bad_extension() {
+        let path = Path::new("/tmp/fxrs-tiny.png.xxx");
+        std::fs::write(&path, "nope").unwrap();
+        assert!(load_image_input(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn image_input_rejects_missing_file() {
+        assert!(load_image_input(Path::new("/tmp/definitely-missing-xyz.png")).is_err());
     }
 }

@@ -27,6 +27,8 @@ pub struct AgentRequest {
     pub resume: Option<String>,
     /// Explicit message files to append after the prompt (fx --message style).
     pub messages: Vec<String>,
+    /// Images to attach to the first user message (`ask --image PATH`).
+    pub images: Vec<crate::providers::ImageInput>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +163,21 @@ pub async fn run(
     // Seed the transcript with the user's first message.
     if transcript.is_empty() {
         if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
-            transcript.push(Message::user(p));
+            if req.images.is_empty() {
+                transcript.push(Message::user(p));
+            } else {
+                let mut content = vec![crate::providers::ContentBlock::Text(p.to_string())];
+                for img in &req.images {
+                    content.push(crate::providers::ContentBlock::Image {
+                        media_type: img.media_type.clone(),
+                        data: img.data_base64.clone(),
+                    });
+                }
+                transcript.push(Message {
+                    role: "user".into(),
+                    content,
+                });
+            }
         }
     }
     for extra in req.messages.iter().filter(|m| !m.trim().is_empty()) {

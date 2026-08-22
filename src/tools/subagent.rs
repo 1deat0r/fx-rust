@@ -153,6 +153,7 @@ pub async fn run_subagent_named_with_parent(
         interactive: false,
         resume: None,
         messages: Vec::new(),
+            images: Vec::new(),
     };
 
     DEPTH.with(|d| d.set(depth + 1));

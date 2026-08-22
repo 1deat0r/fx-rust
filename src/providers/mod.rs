@@ -36,6 +36,14 @@ impl ProviderKind {
     }
 }
 
+/// An image attached to a user request (`ask --image PATH`), pre-encoded as
+/// base64 with its media type.
+#[derive(Debug, Clone)]
+pub struct ImageInput {
+    pub media_type: String,
+    pub data_base64: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ContentBlock {
     Text(String),

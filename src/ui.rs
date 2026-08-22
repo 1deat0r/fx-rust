@@ -327,6 +327,7 @@ pub async fn run_interactive(
                                 interactive: true,
                                 resume: Some(rid),
                                 messages: Vec::new(),
+            images: Vec::new(),
                             };
                             run_one(&config, store, &interactive_human, req).await?;
                         }
@@ -634,6 +635,7 @@ pub async fn run_interactive(
             interactive: true,
             resume: None,
             messages: Vec::new(),
+            images: Vec::new(),
         };
         if first && resume.is_none() {
             // nothing to seed; run normally.

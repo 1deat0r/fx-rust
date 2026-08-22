@@ -519,6 +519,7 @@ impl AcpServer {
             interactive: false,
             resume: Some(session_id.clone()),
             messages: Vec::new(),
+            images: Vec::new(),
         };
 
         let run_fut = crate::agent::run(req, cfg2, &human, &store2);

@@ -146,6 +146,7 @@ pub async fn run_work_item(
         interactive: false,
         resume: None,
         messages: Vec::new(),
+            images: Vec::new(),
     };
     let human = crate::ui::QuietHuman;
     let outcome = crate::agent::run(req, child_config, &human, &session_store)
