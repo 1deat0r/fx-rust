@@ -201,6 +201,7 @@ fn browser_terminal_exec_runs_command_and_returns_output() {
         interactive: false,
         session_id: String::new(),
         config: Arc::new(fxrs::config::Config {
+            mode: "ask".into(),
             workspace: cwd.clone(),
             model: "m".into(),
             permission_mode: fxrs::permissions::PermissionMode::Auto,

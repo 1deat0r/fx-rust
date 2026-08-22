@@ -23,6 +23,8 @@ pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 pub struct SettingsFile {
     pub model: Option<String>,
     pub permission_mode: Option<String>,
+    /// Active mode id (`ask` | `code`; upstream builtins/modes.zig).
+    pub mode: Option<String>,
     pub max_agent_steps: Option<usize>,
     pub max_tool_result_bytes: Option<usize>,
     pub first_call_tool_choice: Option<String>,
@@ -274,6 +276,8 @@ pub struct Config {
     /// Workspace the config was resolved for.
     pub workspace: std::path::PathBuf,
     pub model: String,
+    /// Active mode id (`ask` default; resolves via `modes::builtin_registry`).
+    pub mode: String,
     pub permission_mode: PermissionMode,
     pub max_agent_steps: usize,
     pub max_tool_result_bytes: usize,
@@ -297,6 +301,32 @@ pub struct Config {
     pub presentation_mode: String,
     /// Upgrade channel (`stable` | `beta`).
     pub update_channel: String,
+}
+
+impl Config {
+    /// The active [`crate::modes::ModeSpec`] for this config (builtins only
+    /// at v0.0.5 parity; unknown ids fall back to the builtin default).
+    pub fn active_mode(&self) -> crate::modes::ModeSpec {
+        crate::modes::builtin_registry()
+            .lookup(&self.mode)
+            .cloned()
+            .unwrap_or_else(|| {
+                crate::modes::builtin_registry()
+                    .lookup(crate::modes::DEFAULT_MODE_ID)
+                    .cloned()
+                    .expect("builtin default mode always exists")
+            })
+    }
+
+    /// Effective permission gate: the active mode's pinned permission mode
+    /// wins; a custom/unknown mode falls back to the explicit setting.
+    pub fn effective_permission_mode(&self) -> PermissionMode {
+        let registry = crate::modes::builtin_registry();
+        match registry.lookup(&self.mode) {
+            Some(m) => m.permission_mode,
+            None => self.permission_mode,
+        }
+    }
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -391,6 +421,12 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
         .transpose()?
         .unwrap_or(PermissionMode::Auto);
 
+    let mode = std::env::var("FX_MODE")
+        .ok()
+        .flatten_nonempty()
+        .or(settings.mode)
+        .unwrap_or_else(|| crate::modes::DEFAULT_MODE_ID.to_string());
+
     let max_agent_steps = std::env::var("FX_MAX_AGENT_STEPS")
         .ok()
         .flatten_nonempty()
@@ -483,6 +519,7 @@ pub fn resolve(workspace: &Path) -> Result<Config> {
     Ok(Config {
         workspace: workspace.to_path_buf(),
         model,
+        mode,
         permission_mode,
         max_agent_steps,
         max_tool_result_bytes,

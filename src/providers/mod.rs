@@ -409,6 +409,7 @@ mod tests {
         std::env::set_var("FX_PROVIDER", "openai");
         std::env::set_var("AI_BASE_URL", "http://localhost:11434/v1");
         let cfg = Config {
+            mode: "ask".into(),
             workspace: std::path::PathBuf::from("/tmp/ws"),
             model: "qwen3-coder".into(),
             permission_mode: crate::permissions::PermissionMode::Auto,

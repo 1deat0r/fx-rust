@@ -971,6 +971,38 @@ fn xml_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// Whether `name` is a built-in (non-MCP) tool in the local set.
+pub fn is_builtin_tool_name(name: &str) -> bool {
+    matches!(
+        name,
+        "run_command"
+            | "background_process"
+            | "read_file"
+            | "write_file"
+            | "edit_file"
+            | "delete_file"
+            | "rename_file"
+            | "copy_file"
+            | "create_folder"
+            | "file_info"
+            | "glob_files"
+            | "grep_files"
+            | "list_files"
+            | "open_file"
+            | "memory"
+            | "web_fetch"
+            | "web_search"
+            | "semantic_search"
+            | "ask_user_question"
+            | "skill"
+            | "install_skill"
+            | "view_image"
+            | "terminal"
+            | "browser_terminal"
+            | "subagent"
+    )
+}
+
 #[cfg(test)]
 mod text_tool_tests {
     use super::*;

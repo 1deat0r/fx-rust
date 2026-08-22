@@ -189,6 +189,7 @@ mod tests {
             max_result_bytes: 1024,
             interactive: false,
             config: Arc::new(Config {
+                mode: "ask".into(),
                 workspace: ws.into(),
                 model: "m".into(),
                 permission_mode: crate::permissions::PermissionMode::Auto,

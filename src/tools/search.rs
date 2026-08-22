@@ -275,6 +275,7 @@ mod tests {
             interactive: false,
             session_id: String::new(),
             config: Arc::new(crate::config::Config {
+                mode: "ask".into(),
                 workspace: ws.into(),
                 model: "m".into(),
                 permission_mode: crate::permissions::PermissionMode::Auto,

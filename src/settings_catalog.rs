@@ -188,6 +188,7 @@ mod tests {
 
     fn cfg() -> Config {
         Config {
+            mode: "ask".into(),
             workspace: "/ws".into(),
             model: "m".into(),
             permission_mode: PermissionMode::Auto,

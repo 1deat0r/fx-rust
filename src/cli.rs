@@ -737,6 +737,52 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             }
             Ok(0)
         }
+        Some("modes") => {
+            let cfg = config::resolve(&cwd())?;
+            let registry = crate::modes::builtin_registry();
+            if args.clone().any(|a| a == "--json") {
+                let modes: Vec<serde_json::Value> = registry
+                    .modes
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "id": m.id,
+                            "name": m.name,
+                            "description": m.description,
+                            "permission_mode": format!("{}", m.permission_mode),
+                            "tool_policy": format!("{:?}", m.tool_policy).to_ascii_lowercase(),
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "default_mode": registry.default_mode_id,
+                        "modes": modes,
+                    }))?
+                );
+                return Ok(0);
+            }
+            println!("modes (default: {})", registry.default_mode_id);
+            for m in &registry.modes {
+                println!(
+                    "  {} — {} (permission: {}, tools: {})",
+                    m.id,
+                    m.name,
+                    m.permission_mode,
+                    match m.tool_policy {
+                        crate::modes::ToolPolicy::Full => "full",
+                        crate::modes::ToolPolicy::ReadOnly => "read-only",
+                    }
+                );
+            }
+            println!(
+                "active: {} (permission {})",
+                cfg.mode,
+                cfg.effective_permission_mode()
+            );
+            Ok(0)
+        }
         Some("usage") => {
             let mut period = "7d";
             let wants_json = args.clone().any(|a| a == "--json");
@@ -1195,6 +1241,7 @@ fn show_cli_help() {
          \x1b[32m  fxrs status\x1b[0m             show config status\n\
          \x1b[32m  fxrs permissions\x1b[0m        show permission rules\n\
          \x1b[32m  fxrs models\x1b[0m             show resolved model / provider\n\
+         \x1b[32m  fxrs modes\x1b[0m              list built-in modes (ask/code)\n\
          \x1b[32m  fxrs doctor\x1b[0m            run environment diagnostics\n\
          \x1b[32m  fxrs usage [24h|7d|30d|all]\x1b[0m token usage and cost\n\
          \x1b[32m  fxrs settings\x1b[0m          show catalog + effective settings\n\

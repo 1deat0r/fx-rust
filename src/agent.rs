@@ -66,7 +66,10 @@ pub async fn run(
         None => store.create(&config.workspace, req.interactive)?,
     };
 
-    let mut permissions = Permissions::new(config.permission_mode, config.permission_rules.clone());
+    let mut permissions = Permissions::new(
+        config.effective_permission_mode(),
+        config.permission_rules.clone(),
+    );
     for (tool, pattern) in grants_map.iter() {
         permissions.grants.allow(tool, pattern);
     }
@@ -471,6 +474,23 @@ pub async fn run(
             let call = calls.get(idx).cloned().unwrap();
             tool_calls += 1;
 
+            // Active-mode tool policy (upstream mode_registry.toolAllowed):
+            // a read-only mode blocks non-read-only tools pre-execution.
+            let active_mode = config.active_mode();
+            if active_mode.tool_policy == crate::modes::ToolPolicy::ReadOnly
+                && !crate::modes::READ_ONLY_TOOL_NAMES.contains(&call.name.as_str())
+                && tools_allow_check(&call.name)
+            {
+                let denied = crate::modes::blocked_tool_json(
+                    &call.name,
+                    active_mode
+                        .tool_policy_denial_message
+                        .unwrap_or("Tool blocked by the active mode policy."),
+                );
+                transcript.push(Message::tool(call.id.clone(), denied.to_string()));
+                continue;
+            }
+
             let target = tools::target_for(&call.name, &call.arguments).unwrap_or_default();
             let decision = permissions.decide(&crate::permissions::PermissionRequest {
                 tool_name: &call.name,
@@ -542,7 +562,7 @@ pub async fn run(
                             "{name}: blocked by permission rules: {reason}",
                             name = call.name
                         ))),
-                        Decision::Unresolved => match config.permission_mode {
+                        Decision::Unresolved => match config.effective_permission_mode() {
                             PermissionMode::Yolo => {
                                 execute_tool_prepared(&ctx, &effective_call, &prepared).await
                             }
@@ -659,7 +679,7 @@ pub async fn run(
             created_ms: 0,
             updated_ms: crate::util::now_ms(),
             model: provider.model.clone(),
-            mode: config.permission_mode,
+            mode: config.effective_permission_mode(),
             interactive: req.interactive,
             messages: transcript.clone(),
             grants: grants_map.clone(),
@@ -879,4 +899,11 @@ fn usage_recovery_checkpoint(session_id: &str, sess: &crate::sessions::Session) 
     } else {
         let _ = crate::usage_recovery::clear_pending(session_id);
     }
+}
+
+/// Whether `name` is a tool the local toolset publishes (used by the
+/// active-mode read-only policy; MCP/dynamic names are always allowed,
+/// like upstream ToolSet.registry).
+fn tools_allow_check(name: &str) -> bool {
+    crate::tools::is_builtin_tool_name(name)
 }
