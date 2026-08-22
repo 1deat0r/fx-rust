@@ -150,7 +150,11 @@ fn char_boundary_offset(text: &str, offset: usize) -> usize {
         idx -= 1;
     }
     // Prefer the exact requested byte offset when it is a boundary.
-    text.len().min(if text.is_char_boundary(offset) { offset } else { idx })
+    text.len().min(if text.is_char_boundary(offset) {
+        offset
+    } else {
+        idx
+    })
 }
 
 /// A skill reference parsed out of the user prompt (upstream
@@ -189,7 +193,8 @@ fn natural_language_reference_start(prompt: &str) -> Option<&str> {
     let mut text = prompt.trim_start_matches([' ', '\t', '\r', '\n']);
     if text.len() >= "please".len()
         && ascii_eql_ignore_case(&text[.."please".len()], "please")
-        && (text.len() == "please".len() || !text.as_bytes()["please".len()].is_ascii_alphanumeric())
+        && (text.len() == "please".len()
+            || !text.as_bytes()["please".len()].is_ascii_alphanumeric())
     {
         text = text["please".len()..].trim_start_matches([' ', '\t', '\r', '\n', ',', ':']);
     }
@@ -295,9 +300,7 @@ fn matches_sigil_skill_at(text: &[u8], index: usize, skill_name: &str, sigil: u8
     if text.len() - name_start < name.len() {
         return false;
     }
-    if !text[name_start..name_start + name.len()]
-        .eq_ignore_ascii_case(name)
-    {
+    if !text[name_start..name_start + name.len()].eq_ignore_ascii_case(name) {
         return false;
     }
     let end = name_start + name.len();
@@ -310,12 +313,12 @@ fn matches_sigil_skill_at(text: &[u8], index: usize, skill_name: &str, sigil: u8
 /// natural-language "use/apply/activate/invoke/run <name> skill" reference.
 pub fn match_explicit_skill_indices(prompt: &str, skills: &[Skill]) -> Vec<usize> {
     let trimmed = prompt.trim_start_matches([' ', '\t', '\r', '\n']);
-    let leading_sigil = if !trimmed.is_empty() && (trimmed.starts_with('/') || trimmed.starts_with('$'))
-    {
-        trimmed.as_bytes()[0]
-    } else {
-        0
-    };
+    let leading_sigil =
+        if !trimmed.is_empty() && (trimmed.starts_with('/') || trimmed.starts_with('$')) {
+            trimmed.as_bytes()[0]
+        } else {
+            0
+        };
     let natural_reference = parse_natural_language_skill_reference(prompt);
 
     let mut name_counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -444,7 +447,10 @@ mod tests {
             resolve_skill(&skills, "alpha", None),
             SkillResolution::Found(s) if s.name == "alpha"
         ));
-        assert_eq!(resolve_skill(&skills, "missing", None), SkillResolution::NotFound);
+        assert_eq!(
+            resolve_skill(&skills, "missing", None),
+            SkillResolution::NotFound
+        );
         assert_eq!(
             resolve_skill(&skills, "alpha", Some("/ws/.fx/skills/alpha")),
             SkillResolution::Found(&skills[0])
@@ -458,7 +464,10 @@ mod tests {
             SkillResolution::NotFound
         );
         let dup = vec![skill("alpha", "/a"), skill("alpha", "/b")];
-        assert_eq!(resolve_skill(&dup, "alpha", None), SkillResolution::AmbiguousName);
+        assert_eq!(
+            resolve_skill(&dup, "alpha", None),
+            SkillResolution::AmbiguousName
+        );
     }
 
     #[test]
@@ -498,7 +507,10 @@ mod tests {
 
         // sigil forms
         assert_eq!(match_explicit_skill_indices("/review", &skills), vec![0]);
-        assert_eq!(match_explicit_skill_indices("$release please", &skills), vec![1]);
+        assert_eq!(
+            match_explicit_skill_indices("$release please", &skills),
+            vec![1]
+        );
 
         // natural language
         assert_eq!(
@@ -510,10 +522,16 @@ mod tests {
             vec![1]
         );
         // "review" alone is not a reference
-        assert_eq!(match_explicit_skill_indices("review this pr", &skills), Vec::<usize>::new());
+        assert_eq!(
+            match_explicit_skill_indices("review this pr", &skills),
+            Vec::<usize>::new()
+        );
         // ambiguous names are not matched
         let dup = vec![skill("dup", "/a"), skill("dup", "/b"), skill("other", "/c")];
-        assert_eq!(match_explicit_skill_indices("use the dup skill", &dup), Vec::<usize>::new());
+        assert_eq!(
+            match_explicit_skill_indices("use the dup skill", &dup),
+            Vec::<usize>::new()
+        );
         // "the" prefix form
         assert_eq!(
             match_explicit_skill_indices("use the review skill now", &skills),
@@ -527,7 +545,10 @@ mod tests {
         assert!(normalized_reference_text_eql("code-review", "code review"));
         assert!(normalized_reference_text_eql("code_review", "code review"));
         assert!(!normalized_reference_text_eql("codereview", "code review"));
-        assert_eq!(normalize_reference_text("  Use the Code-Review  skill! "), "use the code review skill");
+        assert_eq!(
+            normalize_reference_text("  Use the Code-Review  skill! "),
+            "use the code review skill"
+        );
     }
 
     #[test]
@@ -555,12 +576,18 @@ mod tests {
             diagnostics: vec![],
         };
         // Prompt mentions beta; bindings explicitly list alpha.
-        let bindings = vec![("alpha".to_string(), dir.join("alpha").to_str().unwrap().to_string())];
+        let bindings = vec![(
+            "alpha".to_string(),
+            dir.join("alpha").to_str().unwrap().to_string(),
+        )];
         let (section, _notice) =
             build_explicit_prompt_section(&catalog, "use the beta skill", &bindings, 4096);
         let alpha_pos = section.find("ALPHA BODY").unwrap();
         let beta_pos = section.find("BETA BODY").unwrap();
-        assert!(alpha_pos < beta_pos, "explicit binding precedes prompt match");
+        assert!(
+            alpha_pos < beta_pos,
+            "explicit binding precedes prompt match"
+        );
         assert!(section.starts_with("Explicitly invoked skill content"));
 
         let _ = std::fs::remove_dir_all(&dir);

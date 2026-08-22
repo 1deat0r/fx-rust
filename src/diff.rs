@@ -78,7 +78,11 @@ fn append_trailing_newline_marker(old_text: &str, new_text: &str) -> (Vec<String
 }
 
 /// Trailing-newline marker for one side (upstream `trailingNewlineMarker`).
-pub fn trailing_newline_marker(old_text: &str, new_text: &str, old_side: bool) -> Option<&'static str> {
+pub fn trailing_newline_marker(
+    old_text: &str,
+    new_text: &str,
+    old_side: bool,
+) -> Option<&'static str> {
     if old_text.is_empty() || new_text.is_empty() {
         return None;
     }
@@ -239,7 +243,10 @@ pub fn format_unified(diff: &[DiffLine], path: Option<&str>) -> String {
 
     let mut out = String::new();
     if let Some(path) = path {
-        out.push_str(&format!("\x1b[1m{diff} {path}\x1b[0m\n", diff = "diff --git"));
+        out.push_str(&format!(
+            "\x1b[1m{diff} {path}\x1b[0m\n",
+            diff = "diff --git"
+        ));
     }
     let mut prev_included = false;
     let mut emitted_any = false;
@@ -265,7 +272,11 @@ pub fn format_unified(diff: &[DiffLine], path: Option<&str>) -> String {
 }
 
 fn elision_line(width: usize) -> String {
-    format!("{prefix:wid$}\n", prefix = "…", wid = width.saturating_add(2))
+    format!(
+        "{prefix:wid$}\n",
+        prefix = "…",
+        wid = width.saturating_add(2)
+    )
 }
 
 fn render_diff_line(width: usize, line: &DiffLine) -> String {
@@ -308,7 +319,13 @@ mod tests {
         assert_eq!(diff[1].old_num, None);
         assert_eq!(diff[1].new_num, Some(2));
         assert_eq!(diff[2].op, LineOp::Equal);
-        assert_eq!(count_stats(&diff), Stats { additions: 1, deletions: 0 });
+        assert_eq!(
+            count_stats(&diff),
+            Stats {
+                additions: 1,
+                deletions: 0
+            }
+        );
     }
 
     #[test]
@@ -319,13 +336,22 @@ mod tests {
         assert_eq!(diff[1].text, "b");
         assert_eq!(diff[1].old_num, Some(2));
         assert_eq!(diff[1].new_num, None);
-        assert_eq!(count_stats(&diff), Stats { additions: 0, deletions: 1 });
+        assert_eq!(
+            count_stats(&diff),
+            Stats {
+                additions: 0,
+                deletions: 1
+            }
+        );
     }
 
     #[test]
     fn lines_have_correct_1_based_numbers() {
         let diff = compute("one\ntwo\nthree\n", "one\ntwo\nthree\nfour\n");
-        let adds = diff.iter().filter(|l| l.op == LineOp::Add).collect::<Vec<_>>();
+        let adds = diff
+            .iter()
+            .filter(|l| l.op == LineOp::Add)
+            .collect::<Vec<_>>();
         assert_eq!(adds.len(), 1);
         assert_eq!(adds[0].text, "four");
         assert_eq!(adds[0].new_num, Some(4));
@@ -361,9 +387,18 @@ mod tests {
 
     #[test]
     fn unified_format_includes_context_and_elides() {
-        let old_text = (1..=30).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+        let old_text = (1..=30)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let new_text = (1..=30)
-            .map(|n| if n == 15 { format!("CHANGED {n}") } else { format!("line {n}") })
+            .map(|n| {
+                if n == 15 {
+                    format!("CHANGED {n}")
+                } else {
+                    format!("line {n}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let diff = compute(&old_text, &new_text);
@@ -371,14 +406,26 @@ mod tests {
         assert!(rendered.contains("CHANGED 15"), "rendered: {rendered}");
         assert!(rendered.contains("line 13"), "context before");
         assert!(rendered.contains("line 17"), "context after");
-        assert!(!rendered.contains("\u{2026}"), "single small hunk fits: {rendered}");
+        assert!(
+            !rendered.contains("\u{2026}"),
+            "single small hunk fits: {rendered}"
+        );
     }
 
     #[test]
     fn unified_format_caps_long_hunks_with_elision() {
-        let old_text = (1..=30).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+        let old_text = (1..=30)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let new_text = (1..=30)
-            .map(|n| if (15..=25).contains(&n) { format!("CHANGED {n}") } else { format!("line {n}") })
+            .map(|n| {
+                if (15..=25).contains(&n) {
+                    format!("CHANGED {n}")
+                } else {
+                    format!("line {n}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let diff = compute(&old_text, &new_text);
@@ -386,10 +433,19 @@ mod tests {
         // The 6-line display cap shows the head of the hunk (context +
         // removals) then an elision; the add lines beyond the cap are omitted.
         assert!(rendered.contains("line 14"), "context: {rendered}");
-        assert!(rendered.contains("\u{2026}"), "elision cap reached: {rendered}");
-        assert!(!rendered.contains("CHANGED 15"), "beyond cap is elided: {rendered}");
+        assert!(
+            rendered.contains("\u{2026}"),
+            "elision cap reached: {rendered}"
+        );
+        assert!(
+            !rendered.contains("CHANGED 15"),
+            "beyond cap is elided: {rendered}"
+        );
         let count = rendered.lines().count();
-        assert!(count <= MAX_DISPLAY_LINES + 2, "capped with elisions: {rendered}");
+        assert!(
+            count <= MAX_DISPLAY_LINES + 2,
+            "capped with elisions: {rendered}"
+        );
     }
 
     #[test]

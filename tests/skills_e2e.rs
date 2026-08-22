@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use fxrs::skills::{Registry, discover, managed_root};
+use fxrs::skills::{discover, managed_root, Registry};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -47,7 +47,11 @@ fn discovery_and_command_harness_end_to_end() {
     std::fs::create_dir_all(&workspace).unwrap();
 
     // Workspace skill (auto-discovered from .fx/skills).
-    make_skill(&workspace.join(".fx/skills"), "review", "Review pull requests");
+    make_skill(
+        &workspace.join(".fx/skills"),
+        "review",
+        "Review pull requests",
+    );
 
     let catalog = discover(&workspace);
     let review = catalog.find("review").expect("workspace skill discovered");
@@ -57,7 +61,11 @@ fn discovery_and_command_harness_end_to_end() {
     // Create a managed skill through the command harness.
     let cmd = fxrs::skills::commands::parse_command("create helper");
     let result = fxrs::skills::commands::execute_command(&workspace, &cmd).unwrap();
-    assert!(result.render().contains("helper/SKILL.md"), "{}", result.render());
+    assert!(
+        result.render().contains("helper/SKILL.md"),
+        "{}",
+        result.render()
+    );
     assert!(managed_root().join("helper/SKILL.md").is_file());
 
     // The managed root is discovered.
@@ -79,12 +87,20 @@ fn discovery_and_command_harness_end_to_end() {
     // Show: reads back the SKILL.md body.
     let show = fxrs::skills::commands::parse_command("show review");
     let result = fxrs::skills::commands::execute_command(&workspace, &show).unwrap();
-    assert!(result.render().contains("Instructions for review"), "{}", result.render());
+    assert!(
+        result.render().contains("Instructions for review"),
+        "{}",
+        result.render()
+    );
 
     // Remove only works for managed skills.
     let remove_alpha = fxrs::skills::commands::parse_command("remove alpha");
     let result = fxrs::skills::commands::execute_command(&workspace, &remove_alpha).unwrap();
-    assert!(result.render().contains("Removed skill 'alpha'"), "{}", result.render());
+    assert!(
+        result.render().contains("Removed skill 'alpha'"),
+        "{}",
+        result.render()
+    );
     assert!(!managed_root().join("alpha").exists());
 
     let remove_review = fxrs::skills::commands::parse_command("remove review");

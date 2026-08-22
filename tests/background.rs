@@ -78,7 +78,10 @@ fn start_output_exit_and_stop() {
     }
     let log = store.log_text(&id, 8192, None).unwrap();
     assert!(log.contains("hello background"), "log: {log}");
-    assert!(exited, "background process did not exit within timeout; log: {log}");
+    assert!(
+        exited,
+        "background process did not exit within timeout; log: {log}"
+    );
     assert_eq!(exit_code, Some(0));
 
     let _ = std::fs::remove_dir_all(&home);

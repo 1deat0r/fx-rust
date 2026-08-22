@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 
 use super::contract::{validate_managed_skill_name, SkillMetadataResult};
-use super::{Catalog, Registry, Skill, managed_root, SKILL_FILE_BYTES_DEFAULT};
+use super::{managed_root, Catalog, Registry, Skill, SKILL_FILE_BYTES_DEFAULT};
 
 /// Parsed skills command (upstream `skill_commands.Command`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,7 +233,8 @@ pub fn install_from_source(
     let requested = normalize_install_request(source, filter)?;
 
     if let Some(local) = resolve_install_directory(&requested.source) {
-        let installed = install_from_directory(skills_dir, &local, None, requested.filter.as_deref())?;
+        let installed =
+            install_from_directory(skills_dir, &local, None, requested.filter.as_deref())?;
         if !installed.is_empty() {
             return Ok(installed);
         }
@@ -247,7 +248,10 @@ struct NormalizedInstall {
     filter: Option<String>,
 }
 
-fn normalize_install_request(source: &str, explicit_filter: Option<&str>) -> Result<NormalizedInstall> {
+fn normalize_install_request(
+    source: &str,
+    explicit_filter: Option<&str>,
+) -> Result<NormalizedInstall> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
         bail!("invalid skill install source");
@@ -257,7 +261,11 @@ fn normalize_install_request(source: &str, explicit_filter: Option<&str>) -> Res
         .map(|ps| (ps.0, ps.1))
         .unwrap_or((trimmed.to_string(), None));
     let (inline_source, inline_filter) = parse_inline_install_source(&command_source);
-    let merged = merge_install_filters(command_filter, inline_filter, explicit_filter.map(str::to_string))?;
+    let merged = merge_install_filters(
+        command_filter,
+        inline_filter,
+        explicit_filter.map(str::to_string),
+    )?;
     Ok(NormalizedInstall {
         source: inline_source,
         filter: merged,
@@ -298,8 +306,7 @@ fn parse_npx_install_source(input: &str) -> Option<(String, Option<String>)> {
 }
 
 fn looks_like_skills_install_command(input: &str) -> bool {
-    (input.starts_with("npx ") || input.starts_with("bunx "))
-        && input.contains("skills add")
+    (input.starts_with("npx ") || input.starts_with("bunx ")) && input.contains("skills add")
 }
 
 fn parse_inline_install_source(input: &str) -> (String, Option<String>) {
@@ -402,16 +409,9 @@ fn extract_repo_name(url: &str) -> String {
     name
 }
 
-fn install_from_github(
-    skills_dir: &Path,
-    url: &str,
-    filter: Option<&str>,
-) -> Result<Vec<String>> {
+fn install_from_github(skills_dir: &Path, url: &str, filter: Option<&str>) -> Result<Vec<String>> {
     std::fs::create_dir_all(skills_dir).context("create skills dir")?;
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "fx-skill-install-{}",
-        crate::util::now_ms()
-    ));
+    let tmp_dir = std::env::temp_dir().join(format!("fx-skill-install-{}", crate::util::now_ms()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let git_url = clone_url_for_source(url);
@@ -452,21 +452,15 @@ fn install_from_directory(
     // Root SKILL.md (a single-skill repo / directory).
     let root_md = source_dir.join("SKILL.md");
     if root_md.is_file() {
-        let root_fallback = fallback_name
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                source_dir
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "skill".to_string())
-            });
-        if let Some(name) = install_candidate_skill(
-            skills_dir,
-            source_dir,
-            source_dir,
-            root_fallback,
-            filter,
-        )? {
+        let root_fallback = fallback_name.map(str::to_string).unwrap_or_else(|| {
+            source_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "skill".to_string())
+        });
+        if let Some(name) =
+            install_candidate_skill(skills_dir, source_dir, source_dir, root_fallback, filter)?
+        {
             installed.push(name);
             // If the repo root is a single skill, do not also walk children.
             skip_parents.push(source_dir.to_path_buf());
@@ -512,13 +506,9 @@ fn install_from_directory(
             if skip_parents.contains(&parent.to_path_buf()) {
                 continue;
             }
-            if let Some(name) = install_candidate_skill(
-                skills_dir,
-                parent,
-                source_dir,
-                dir_name.clone(),
-                filter,
-            )? {
+            if let Some(name) =
+                install_candidate_skill(skills_dir, parent, source_dir, dir_name.clone(), filter)?
+            {
                 walked.push(name);
                 skip_parents.push(parent.to_path_buf());
             }
@@ -568,7 +558,12 @@ fn install_candidate_skill(
 }
 
 /// Transactional copy: stage into a temp dir, then swap into place.
-fn copy_skill_dir(source_root: &Path, src_dir: &Path, skills_dir: &Path, skill_name: &str) -> Result<()> {
+fn copy_skill_dir(
+    source_root: &Path,
+    src_dir: &Path,
+    skills_dir: &Path,
+    skill_name: &str,
+) -> Result<()> {
     validate_managed_skill_name(skill_name).map_err(|_| InvalidSkillName)?;
     std::fs::create_dir_all(skills_dir).context("create skills dir")?;
 
@@ -701,8 +696,14 @@ mod tests {
                 filter: Some("x".into())
             })
         );
-        assert_eq!(parse_command("create my-skill"), Command::Create("my-skill".into()));
-        assert_eq!(parse_command("remove my-skill"), Command::Remove("my-skill".into()));
+        assert_eq!(
+            parse_command("create my-skill"),
+            Command::Create("my-skill".into())
+        );
+        assert_eq!(
+            parse_command("remove my-skill"),
+            Command::Remove("my-skill".into())
+        );
         assert_eq!(parse_command("path"), Command::Path);
         assert_eq!(parse_command("wibble"), Command::Usage);
     }
@@ -733,8 +734,14 @@ mod tests {
         let dir = temp_dir("inst");
         let skills_dir = dir.join("skills");
         let src = dir.join("repo");
-        write(&src.join("alpha/SKILL.md"), "---\nname: alpha\ndescription: Alpha skill\n---\nBody\n");
-        write(&src.join("beta/SKILL.md"), "---\nname: beta\ndescription: Beta skill\n---\nBody\n");
+        write(
+            &src.join("alpha/SKILL.md"),
+            "---\nname: alpha\ndescription: Alpha skill\n---\nBody\n",
+        );
+        write(
+            &src.join("beta/SKILL.md"),
+            "---\nname: beta\ndescription: Beta skill\n---\nBody\n",
+        );
         write(&src.join("README.md"), "not a skill\n");
 
         let names = install_from_local_dir(&skills_dir, &src, None).unwrap();
@@ -758,7 +765,10 @@ mod tests {
         let dir = temp_dir("single");
         let skills_dir = dir.join("skills");
         let src = dir.join("my-skill-repo");
-        write(&src.join("SKILL.md"), "---\nname: my-skill\ndescription: A single skill\n---\nBody\n");
+        write(
+            &src.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A single skill\n---\nBody\n",
+        );
         write(&src.join("helper.sh"), "#!/bin/sh\n");
 
         let names = install_from_local_dir(&skills_dir, &src, None).unwrap();
@@ -775,7 +785,9 @@ mod tests {
     #[test]
     fn install_sources_parse() {
         assert_eq!(
-            normalize_install_request("owner/repo", None).unwrap().source,
+            normalize_install_request("owner/repo", None)
+                .unwrap()
+                .source,
             "owner/repo"
         );
         let n = normalize_install_request("npx skills add owner/repo --skill web", None).unwrap();
@@ -802,8 +814,14 @@ mod tests {
         let dir = temp_dir("skip");
         let skills_dir = dir.join("skills");
         let src = dir.join("repo");
-        write(&src.join("bad/SKILL.md"), "---\nname: bad\n  continued\n---\n");
-        write(&src.join("good/SKILL.md"), "---\nname: good\ndescription: ok\n---\n");
+        write(
+            &src.join("bad/SKILL.md"),
+            "---\nname: bad\n  continued\n---\n",
+        );
+        write(
+            &src.join("good/SKILL.md"),
+            "---\nname: good\ndescription: ok\n---\n",
+        );
         let names = install_from_local_dir(&skills_dir, &src, None).unwrap();
         assert_eq!(names, vec!["good".to_string()]);
         assert!(!skills_dir.join("bad").exists());

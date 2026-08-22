@@ -54,7 +54,11 @@ fn fetch_registry(query: &str) -> Option<Vec<Value>> {
     let body: String = resp.into_string().ok()?;
     let v: Value = serde_json::from_str(&body).ok()?;
     // Accept {servers: [...]} or a bare array.
-    let arr = v.get("servers").cloned().or_else(|| v.get("results").cloned()).unwrap_or(v);
+    let arr = v
+        .get("servers")
+        .cloned()
+        .or_else(|| v.get("results").cloned())
+        .unwrap_or(v);
     arr.as_array().cloned()
 }
 

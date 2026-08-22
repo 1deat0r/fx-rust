@@ -59,7 +59,11 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
             let wants_all = args.clone().any(|a| a == "--all");
-            let sessions = store.list(if wants_all { None } else { Some(&cfg.workspace) })?;
+            let sessions = store.list(if wants_all {
+                None
+            } else {
+                Some(&cfg.workspace)
+            })?;
             let wants_json = args.clone().any(|a| a == "--json");
             if wants_json {
                 let arr: Vec<_> = sessions
@@ -124,9 +128,7 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                 Some("migrate") => {
                     let target = args.next().map(|s| s.to_string());
                     let target = match target.as_deref() {
-                        Some("last" | "latest") => store
-                            .latest(&cfg.workspace)?
-                            .map(|s| s.id),
+                        Some("last" | "latest") => store.latest(&cfg.workspace)?.map(|s| s.id),
                         other => other.map(str::to_string),
                     };
                     let target = target.ok_or_else(|| {
@@ -148,9 +150,15 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                                     }))?
                                 );
                             } else if migrated {
-                                println!("migrated session {} -> schema v{}", sess.id, sess.schema_version);
+                                println!(
+                                    "migrated session {} -> schema v{}",
+                                    sess.id, sess.schema_version
+                                );
                             } else {
-                                println!("session {} is already current (schema v{})", sess.id, sess.schema_version);
+                                println!(
+                                    "session {} is already current (schema v{})",
+                                    sess.id, sess.schema_version
+                                );
                             }
                             Ok(0)
                         }
@@ -160,9 +168,7 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                 Some("recover") => {
                     let target = args.next().map(|s| s.to_string());
                     let target = match target.as_deref() {
-                        Some("last" | "latest") => store
-                            .latest(&cfg.workspace)?
-                            .map(|s| s.id),
+                        Some("last" | "latest") => store.latest(&cfg.workspace)?.map(|s| s.id),
                         other => other.map(str::to_string),
                     };
                     let target = target.ok_or_else(|| {
@@ -827,12 +833,15 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             // Phase 5 full-screen TUI (alternate screen + raw mode).
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
-            let resume = args.clone().find(|a| a.as_str() == "--resume").and_then(|_| {
-                args.clone()
-                    .skip_while(|a| a.as_str() != "--resume")
-                    .nth(1)
-                    .cloned()
-            });
+            let resume = args
+                .clone()
+                .find(|a| a.as_str() == "--resume")
+                .and_then(|_| {
+                    args.clone()
+                        .skip_while(|a| a.as_str() != "--resume")
+                        .nth(1)
+                        .cloned()
+                });
             crate::tui::run_tui(cfg, &store, resume, false).await?;
             Ok(0)
         }
@@ -2366,14 +2375,20 @@ async fn run_ask(rest: &[String]) -> Result<i32> {
 
 pub fn load_image_input_pub(path: &Path) -> Result<crate::providers::ImageInput> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
     if buf.len() > 32 * 1024 * 1024 {
         bail!("image too large (max 32 MiB): {}", path.display());
     }
-    let media_type = match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    let media_type = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
@@ -2385,7 +2400,6 @@ pub fn load_image_input_pub(path: &Path) -> Result<crate::providers::ImageInput>
         data_base64: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buf),
     })
 }
-
 
 #[allow(dead_code)]
 fn _p(_: &Path) {}
@@ -2656,8 +2670,12 @@ async fn run_pr_command(args: &[String]) -> Result<i32> {
         .collect::<Vec<_>>()
         .join(" ");
     let workspace = cwd();
-    let prompt =
-        crate::github::build_prompt(&crate::github::Workflow::PullRequest, "en", &context, &workspace)?;
+    let prompt = crate::github::build_prompt(
+        &crate::github::Workflow::PullRequest,
+        "en",
+        &context,
+        &workspace,
+    )?;
     let text = run_draft_agent(&prompt).await?;
     let draft = crate::github::parse_draft(&text)?;
     if !publish {
@@ -2739,7 +2757,10 @@ async fn run_credits(wants_json: bool) -> Result<i32> {
                     }))?
                 );
             } else {
-                println!("credits: {}", snapshot.balance.as_deref().unwrap_or("unknown"));
+                println!(
+                    "credits: {}",
+                    snapshot.balance.as_deref().unwrap_or("unknown")
+                );
                 if let Some(used) = &snapshot.used {
                     println!("used: {used}");
                 }
@@ -2767,7 +2788,10 @@ async fn run_credits(wants_json: bool) -> Result<i32> {
 /// top-level command: choose the model provider. Prints the active provider
 /// without an argument.
 async fn run_provider(args: &[String]) -> Result<i32> {
-    let kind_arg = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str());
+    let kind_arg = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
     match kind_arg {
         None => {
             let cfg = config::resolve(&cwd())?;
@@ -2782,9 +2806,9 @@ async fn run_provider(args: &[String]) -> Result<i32> {
                 "gateway" => "gateway",
                 "anthropic" => "anthropic",
                 "openai" | "local" => "openai",
-                other => bail!(
-                    "unknown provider: {other} (expected gateway, anthropic, or openai)"
-                ),
+                other => {
+                    bail!("unknown provider: {other} (expected gateway, anthropic, or openai)")
+                }
             };
             println!("provider: {normalized}");
             println!("set FX_PROVIDER={normalized} (or persist via ~/.fx/settings.json)");
@@ -2793,13 +2817,16 @@ async fn run_provider(args: &[String]) -> Result<i32> {
     }
 }
 
-
 // ------------------------------------------------------------------ diff
 
 /// `fxrs diff <old-file> <new-file>` — unified line diff between two files
 /// (port of `core/output/diff.zig` compute + formatUnified).
 async fn run_diff(args: &[String]) -> Result<i32> {
-    let non_flags: Vec<&str> = args.iter().map(|s| s.as_str()).filter(|a| !a.starts_with('-')).collect();
+    let non_flags: Vec<&str> = args
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|a| !a.starts_with('-'))
+        .collect();
     if non_flags.len() != 2 || args.iter().any(|a| a == "--help" || a == "-h") {
         bail!("usage: fxrs diff <old-file> <new-file>");
     }
@@ -2811,7 +2838,8 @@ async fn run_diff(args: &[String]) -> Result<i32> {
         .with_context(|| format!("reading {}", new_path.display()))?;
     let diff = crate::diff::compute(&old_text, &new_text);
     let stats = crate::diff::count_stats(&diff);
-    let rendered = crate::diff::format_unified(&diff, Some(new_path.display().to_string().as_str()));
+    let rendered =
+        crate::diff::format_unified(&diff, Some(new_path.display().to_string().as_str()));
     print!("{rendered}");
     eprintln!(
         "{}: +{} -{}",
@@ -2821,7 +2849,6 @@ async fn run_diff(args: &[String]) -> Result<i32> {
     );
     Ok(0)
 }
-
 
 // ------------------------------------------------------------------ skills
 
@@ -2840,7 +2867,10 @@ async fn cmd_skills(args: &[String], workspace: &Path) -> Result<i32> {
     let command = crate::skills::commands::parse_command(&line);
     if wants_json && matches!(command, crate::skills::commands::Command::List) {
         let catalog = crate::skills::discover(workspace);
-        println!("{}", serde_json::to_string_pretty(&crate::skills::catalog_summary(&catalog))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&crate::skills::catalog_summary(&catalog))?
+        );
         return Ok(0);
     }
 
@@ -2855,7 +2885,6 @@ async fn cmd_skills(args: &[String], workspace: &Path) -> Result<i32> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -2872,7 +2901,9 @@ mod tests {
         assert_eq!(img.media_type, "image/png");
         assert!(!img.data_base64.is_empty());
         // round-trips to the original bytes
-        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data_base64).unwrap();
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data_base64)
+                .unwrap();
         assert!(!decoded.is_empty());
         assert!(decoded.starts_with(b"\x89PNG"));
     }

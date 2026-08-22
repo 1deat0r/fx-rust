@@ -146,7 +146,10 @@ pub fn fetch_remote_teams() -> Result<Option<Vec<Team>>> {
 
 /// Run the `fxrs teams` CLI. `args` are everything after `teams`.
 pub fn run_teams(args: &[String]) -> Result<i32> {
-    let sub = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str());
+    let sub = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
     let wants_json = args.iter().any(|a| a == "--json");
 
     let mut store = TeamsStore::open()?;
@@ -252,13 +255,26 @@ mod tests {
         let mut store = TeamsStore::default();
         store.set_current("team_b").unwrap();
         store.upsert(vec![
-            Team { id: "team_a".into(), name: "A".into(), slug: "a".into(), is_current: false },
-            Team { id: "team_b".into(), name: "B".into(), slug: "b".into(), is_current: false },
+            Team {
+                id: "team_a".into(),
+                name: "A".into(),
+                slug: "a".into(),
+                is_current: false,
+            },
+            Team {
+                id: "team_b".into(),
+                name: "B".into(),
+                slug: "b".into(),
+                is_current: false,
+            },
         ]);
         assert_eq!(store.teams().len(), 2);
         assert_eq!(store.current(), Some("team_b"));
         // The remote row must not clobber the local current selection.
-        assert!(store.teams().iter().any(|t| t.id == "team_b" && t.is_current));
+        assert!(store
+            .teams()
+            .iter()
+            .any(|t| t.id == "team_b" && t.is_current));
         assert!(store.teams().iter().any(|t| t.id == "team_a"));
     }
 

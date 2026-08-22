@@ -93,10 +93,13 @@ pub fn run_capture(args: &[String], cwd: &std::path::Path) -> Result<i32> {
 
     let store = SessionStore::new()?;
     let id = match id_arg {
-        None | Some("last") => store
-            .list(Some(cwd))
-            .ok()
-            .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0).id) }),
+        None | Some("last") => store.list(Some(cwd)).ok().and_then(|mut v| {
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.remove(0).id)
+            }
+        }),
         Some(i) => Some(i.to_string()),
     };
     let Some(id) = id else {
@@ -121,7 +124,13 @@ pub fn run_capture(args: &[String], cwd: &std::path::Path) -> Result<i32> {
     let ts = Utc::now().format("%Y%m%d-%H%M%S");
     let sanitized: String = id
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let path = captures_dir().join(format!("{sanitized}-{ts}.{ext}"));
     std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;

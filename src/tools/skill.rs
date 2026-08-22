@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{arg, ToolContext};
-use crate::skills::{Registry, managed_root, read_skill_md, SKILL_FILE_BYTES_DEFAULT};
+use crate::skills::{managed_root, read_skill_md, Registry, SKILL_FILE_BYTES_DEFAULT};
 
 /// `skill` tool: list the catalog, or read a skill (optionally a resource).
 pub fn skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
@@ -75,8 +75,13 @@ pub fn install_skill(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let filter = arg(args, "skill").map(|s| s.to_string());
     let skills_dir = managed_root();
     let registry = Registry::discover(&ctx.workspace);
-    let names =
-        crate::skills::commands::install_from_source(&skills_dir, &ctx.workspace, &registry, &src.display().to_string(), filter.as_deref())?;
+    let names = crate::skills::commands::install_from_source(
+        &skills_dir,
+        &ctx.workspace,
+        &registry,
+        &src.display().to_string(),
+        filter.as_deref(),
+    )?;
     if names.is_empty() {
         bail!("install_skill: no skills found in {}", src.display());
     }

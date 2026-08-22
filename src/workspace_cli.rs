@@ -155,7 +155,14 @@ pub fn run_workspace(args: &[String], cwd: &Path) -> Result<i32> {
         "clear" => {
             let cleared = store.clear(cwd);
             store.save()?;
-            println!("{}", if cleared { "cleared additional directories" } else { "nothing to clear" });
+            println!(
+                "{}",
+                if cleared {
+                    "cleared additional directories"
+                } else {
+                    "nothing to clear"
+                }
+            );
         }
         other => {
             eprintln!("fxrs workspace: unknown subcommand `{other}` (list | add <path> | remove <path> | clear)");

@@ -63,7 +63,11 @@ fn credits_cli_renders_snapshot() {
         .env("AI_GATEWAY_API_KEY", "test-key")
         .output()
         .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("42.7"), "stdout: {text}");
     assert!(text.contains("plan: hobby"), "stdout: {text}");

@@ -598,9 +598,7 @@ impl CreditsSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreditsResult {
     Loaded(CreditsSnapshot),
-    Failed {
-        failure: Failure,
-    },
+    Failed { failure: Failure },
 }
 
 /// The credits URL. Honors `FX_E2E_GATEWAY_CREDITS_URL` and
@@ -624,9 +622,13 @@ pub fn credits_url() -> String {
 /// `creditsSnapshotFromJsonValue`).
 pub fn parse_credits(json: &str) -> Result<CreditsSnapshot> {
     let value: Value = serde_json::from_str(json).context("parse credits json")?;
-    let obj = value.as_object().ok_or_else(|| anyhow::anyhow!("credits response must be an object"))?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("credits response must be an object"))?;
     let string_field = |name: &str| -> Option<String> {
-        obj.get(name).and_then(|v| v.as_str()).map(|s| s.to_string())
+        obj.get(name)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     };
     Ok(CreditsSnapshot {
         balance: string_field("balance"),
@@ -693,7 +695,6 @@ fn encode_team(team: &str) -> String {
     // Minimal query encoding for the safe set upstream allows.
     team.replace(' ', "%20")
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -797,11 +798,17 @@ mod tests {
         std::env::set_var("FX_GATEWAY_BASE_URL", "https://gateway.example.com");
         let url = credits_url();
         // Non-loopback base is not trusted -> default gateway.
-        assert!(url.starts_with("https://ai-gateway.vercel.sh"), "url: {url}");
+        assert!(
+            url.starts_with("https://ai-gateway.vercel.sh"),
+            "url: {url}"
+        );
         std::env::set_var("FX_GATEWAY_BASE_URL", "http://127.0.0.1:8787");
         let url = credits_url();
         assert_eq!(url, "http://127.0.0.1:8787/coding-agent/v1/credits");
-        std::env::set_var("FX_E2E_GATEWAY_CREDITS_URL", "http://localhost:9999/credits");
+        std::env::set_var(
+            "FX_E2E_GATEWAY_CREDITS_URL",
+            "http://localhost:9999/credits",
+        );
         let url = credits_url();
         assert_eq!(url, "http://localhost:9999/credits");
         std::env::remove_var("FX_E2E_GATEWAY_CREDITS_URL");
@@ -816,5 +823,4 @@ mod tests {
         assert!(!valid_gateway_team("a b/../../x"));
         assert_eq!(encode_team("team 1"), "team%201");
     }
-
 }

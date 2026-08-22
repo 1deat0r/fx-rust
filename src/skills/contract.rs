@@ -70,21 +70,57 @@ pub struct RootPolicy {
 /// The builtin fx root policy (upstream `builtins/skills.zig`).
 pub static FX_ROOT_POLICY: RootPolicy = RootPolicy {
     workspace_roots: &[
-        RootSpec { source: SkillSource::WorkspaceFx, path: ".fx/skills" },
-        RootSpec { source: SkillSource::WorkspaceShared, path: "skills" },
-        RootSpec { source: SkillSource::WorkspaceOpencode, path: ".opencode/skills" },
-        RootSpec { source: SkillSource::WorkspaceCodex, path: ".codex/skills" },
-        RootSpec { source: SkillSource::WorkspaceClaude, path: ".claude/skills" },
-        RootSpec { source: SkillSource::WorkspaceAgents, path: ".agents/skills" },
-        RootSpec { source: SkillSource::WorkspaceClaw, path: ".claw/skills" },
+        RootSpec {
+            source: SkillSource::WorkspaceFx,
+            path: ".fx/skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceShared,
+            path: "skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceOpencode,
+            path: ".opencode/skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceCodex,
+            path: ".codex/skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceClaude,
+            path: ".claude/skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceAgents,
+            path: ".agents/skills",
+        },
+        RootSpec {
+            source: SkillSource::WorkspaceClaw,
+            path: ".claw/skills",
+        },
     ],
     managed_root_source: Some(SkillSource::GlobalFx),
     global_roots: &[
-        RootSpec { source: SkillSource::GlobalOpencode, path: ".config/opencode/skills" },
-        RootSpec { source: SkillSource::GlobalCodex, path: ".codex/skills" },
-        RootSpec { source: SkillSource::GlobalClaude, path: ".claude/skills" },
-        RootSpec { source: SkillSource::GlobalAgents, path: ".agents/skills" },
-        RootSpec { source: SkillSource::GlobalClaw, path: ".claw/skills" },
+        RootSpec {
+            source: SkillSource::GlobalOpencode,
+            path: ".config/opencode/skills",
+        },
+        RootSpec {
+            source: SkillSource::GlobalCodex,
+            path: ".codex/skills",
+        },
+        RootSpec {
+            source: SkillSource::GlobalClaude,
+            path: ".claude/skills",
+        },
+        RootSpec {
+            source: SkillSource::GlobalAgents,
+            path: ".agents/skills",
+        },
+        RootSpec {
+            source: SkillSource::GlobalClaw,
+            path: ".claw/skills",
+        },
     ],
 };
 
@@ -189,7 +225,10 @@ pub enum SkillMetadataResult<'a> {
     Invalid(InvalidMetadataCause),
 }
 
-pub fn resolve_metadata<'a>(parsed: ParsedSkillFile<'a>, fallback_name: &'a str) -> SkillMetadataResult<'a> {
+pub fn resolve_metadata<'a>(
+    parsed: ParsedSkillFile<'a>,
+    fallback_name: &'a str,
+) -> SkillMetadataResult<'a> {
     match parsed.status {
         MetadataStatus::NoFrontmatter => {
             if let Some(cause) = invalid_skill_name_cause(fallback_name) {
@@ -321,7 +360,10 @@ pub fn parse_skill_file(content: &[u8]) -> ParsedSkillFile<'_> {
             continue;
         }
         if previous_line_recognized && (line.bytes[0] == b' ' || line.bytes[0] == b'\t') {
-            set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::UnsupportedMultiline);
+            set_first_invalid_cause(
+                &mut invalid_cause,
+                InvalidMetadataCause::UnsupportedMultiline,
+            );
             previous_line_recognized = false;
             continue;
         }
@@ -335,7 +377,10 @@ pub fn parse_skill_file(content: &[u8]) -> ParsedSkillFile<'_> {
         if key == b"name" {
             previous_line_recognized = true;
             if saw_name {
-                set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::DuplicateRecognizedKey);
+                set_first_invalid_cause(
+                    &mut invalid_cause,
+                    InvalidMetadataCause::DuplicateRecognizedKey,
+                );
             }
             saw_name = true;
             let parsed_value = parse_recognized_value(raw_value);
@@ -345,7 +390,10 @@ pub fn parse_skill_file(content: &[u8]) -> ParsedSkillFile<'_> {
             }
         } else if key == b"description" {
             if saw_description {
-                set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::DuplicateRecognizedKey);
+                set_first_invalid_cause(
+                    &mut invalid_cause,
+                    InvalidMetadataCause::DuplicateRecognizedKey,
+                );
             }
             saw_description = true;
             if let Some(style) = block_description_style(raw_value) {
@@ -381,7 +429,10 @@ pub fn parse_skill_file(content: &[u8]) -> ParsedSkillFile<'_> {
     if description_block.is_none() {
         if let Some(skill_description) = description {
             if skill_description.len() > MAX_DESCRIPTION_BYTES {
-                set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::DescriptionTooLong);
+                set_first_invalid_cause(
+                    &mut invalid_cause,
+                    InvalidMetadataCause::DescriptionTooLong,
+                );
             } else if let Some(cause) = invalid_text_cause(skill_description) {
                 set_first_invalid_cause(&mut invalid_cause, cause);
             }
@@ -419,7 +470,9 @@ fn header_line_at(header: &[u8], start: usize) -> Option<HeaderLine<'_>> {
         None => header.len(),
     };
     let raw_line = &header[start..line_end];
-    let line = if newline_offset.is_some() && !raw_line.is_empty() && raw_line[raw_line.len() - 1] == b'\r'
+    let line = if newline_offset.is_some()
+        && !raw_line.is_empty()
+        && raw_line[raw_line.len() - 1] == b'\r'
     {
         &raw_line[..raw_line.len() - 1]
     } else {
@@ -461,7 +514,10 @@ fn parse_block_description(
         let indent = leading_space_count(line.bytes);
         if indent == 0 {
             if line.bytes[0] == b'\t' {
-                set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::UnsupportedMultiline);
+                set_first_invalid_cause(
+                    &mut invalid_cause,
+                    InvalidMetadataCause::UnsupportedMultiline,
+                );
                 can_decode = false;
                 continue;
             }
@@ -470,13 +526,19 @@ fn parse_block_description(
             break;
         }
         if indent < line.bytes.len() && line.bytes[indent] == b'\t' {
-            set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::UnsupportedMultiline);
+            set_first_invalid_cause(
+                &mut invalid_cause,
+                InvalidMetadataCause::UnsupportedMultiline,
+            );
             can_decode = false;
             continue;
         }
         if let Some(established) = base_indent {
             if indent < established {
-                set_first_invalid_cause(&mut invalid_cause, InvalidMetadataCause::UnsupportedMultiline);
+                set_first_invalid_cause(
+                    &mut invalid_cause,
+                    InvalidMetadataCause::UnsupportedMultiline,
+                );
                 can_decode = false;
                 continue;
             }
@@ -564,15 +626,14 @@ fn decode_block_description(
         return 0;
     }
 
-    let mut emitter = DescriptionEmitter {
-        output,
-        len: 0,
-    };
+    let mut emitter = DescriptionEmitter { output, len: 0 };
     let mut previous_nonblank = false;
     let mut first = true;
     line_offset = 0;
     while line_offset < last_nonblank_next {
-        let Some(line) = header_line_at(raw, line_offset) else { break };
+        let Some(line) = header_line_at(raw, line_offset) else {
+            break;
+        };
         line_offset = line.next_offset;
         let nonblank = !is_structural_blank(line.bytes);
         if !first {
@@ -600,7 +661,9 @@ fn decode_block_description(
         first = false;
     }
     match style {
-        BlockDescriptionStyle::FoldedClip | BlockDescriptionStyle::LiteralClip => emitter.write(b"\n"),
+        BlockDescriptionStyle::FoldedClip | BlockDescriptionStyle::LiteralClip => {
+            emitter.write(b"\n")
+        }
         BlockDescriptionStyle::FoldedStrip => {}
     }
     emitter.len
@@ -633,7 +696,9 @@ fn find_closing_delimiter(content: &[u8], header_start: usize) -> Option<Closing
             None => content.len(),
         };
         let raw_line = &content[line_start..line_end];
-        let line = if newline_offset.is_some() && !raw_line.is_empty() && raw_line[raw_line.len() - 1] == b'\r'
+        let line = if newline_offset.is_some()
+            && !raw_line.is_empty()
+            && raw_line[raw_line.len() - 1] == b'\r'
         {
             &raw_line[..raw_line.len() - 1]
         } else {
@@ -746,9 +811,6 @@ pub fn read_metadata_prefix(path: &Path) -> Result<Option<Vec<u8>>, std::io::Err
     Ok(Some(content.to_vec()))
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -819,17 +881,13 @@ mod tests {
             "---\r\nname: crlf\r\ndescription: |\r\n  first\r\n  second\r\n---\r\nBody",
             "first\nsecond\n",
         );
-        expect_resolved_description(
-            "---\nname: empty\ndescription: >\n\n---\nBody",
-            "",
-        );
+        expect_resolved_description("---\nname: empty\ndescription: >\n\n---\nBody", "");
     }
 
     #[test]
     fn description_blocks_return_to_top_level_metadata_and_reject_malformed_structure() {
-        let valid = parse(
-            "---\ndescription: >-\n  first\n    extra indent\nname: after-block\n---\nBody",
-        );
+        let valid =
+            parse("---\ndescription: >-\n  first\n    extra indent\nname: after-block\n---\nBody");
         assert_eq!(valid.status, MetadataStatus::Valid);
         assert_eq!(valid.name, Some(b"after-block".as_slice()));
         expect_resolved_description(
@@ -861,7 +919,11 @@ mod tests {
         ];
         for (content, cause) in cases {
             let parsed = parse(content);
-            assert_eq!(parsed.status, MetadataStatus::Invalid(cause), "content: {content:?}");
+            assert_eq!(
+                parsed.status,
+                MetadataStatus::Invalid(cause),
+                "content: {content:?}"
+            );
         }
     }
 
@@ -887,7 +949,10 @@ mod tests {
         assert_eq!(parsed.status, MetadataStatus::Valid);
         let content = format!("---\nname: over\ndescription: >-\n  {over}\n---\n");
         let parsed = parse(&content);
-        assert_eq!(parsed.status, MetadataStatus::Invalid(InvalidMetadataCause::DescriptionTooLong));
+        assert_eq!(
+            parsed.status,
+            MetadataStatus::Invalid(InvalidMetadataCause::DescriptionTooLong)
+        );
         let clipped = "d".repeat(MAX_DESCRIPTION_BYTES - 1);
         let content = format!("---\nname: clipped\ndescription: |\n  {clipped}\n---\n");
         let parsed = parse(&content);
@@ -925,7 +990,10 @@ mod tests {
         assert_eq!(parsed.status, MetadataStatus::Valid);
         let content = format!("---\nname: {oversized_name}\n---\n");
         let parsed = parse(&content);
-        assert_eq!(parsed.status, MetadataStatus::Invalid(InvalidMetadataCause::NameTooLong));
+        assert_eq!(
+            parsed.status,
+            MetadataStatus::Invalid(InvalidMetadataCause::NameTooLong)
+        );
 
         let content = format!("---\nname: valid\ndescription: {valid_description}\n---\n");
         let parsed = parse(&content);
@@ -940,7 +1008,8 @@ mod tests {
 
     #[test]
     fn parse_skill_file_normalizes_crlf_delimiters_and_simply_quoted_values() {
-        let content = "---\r\nname: \"windows-newline\"\r\ndescription: 'quoted description'\r\n---\r\nBody";
+        let content =
+            "---\r\nname: \"windows-newline\"\r\ndescription: 'quoted description'\r\n---\r\nBody";
         let parsed = parse(content);
         assert_eq!(parsed.status, MetadataStatus::Valid);
         assert_eq!(parsed.name, Some(b"windows-newline".as_slice()));
@@ -1017,7 +1086,11 @@ mod tests {
     fn parse_skill_file_classifies_invalid_recognized_metadata() {
         // (content, expected cause, expected name bytes)
         let mut cases: Vec<(Vec<u8>, InvalidMetadataCause, Option<Vec<u8>>)> = vec![
-            (b("---\nname: unclosed"), InvalidMetadataCause::MissingClosingDelimiter, None),
+            (
+                b("---\nname: unclosed"),
+                InvalidMetadataCause::MissingClosingDelimiter,
+                None,
+            ),
             (
                 b("---\nname: prefixed-close\n---suffix\nBody"),
                 InvalidMetadataCause::MissingClosingDelimiter,
@@ -1078,8 +1151,16 @@ mod tests {
 
         for (content, cause, expected_name) in cases {
             let parsed = parse_bytes(&content);
-            assert_eq!(parsed.status, MetadataStatus::Invalid(cause), "content: {content:?}");
-            assert_eq!(parsed.name.map(|n| n.to_vec()), expected_name, "content: {content:?}");
+            assert_eq!(
+                parsed.status,
+                MetadataStatus::Invalid(cause),
+                "content: {content:?}"
+            );
+            assert_eq!(
+                parsed.name.map(|n| n.to_vec()),
+                expected_name,
+                "content: {content:?}"
+            );
         }
     }
 

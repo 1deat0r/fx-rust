@@ -335,7 +335,7 @@ pub async fn run_interactive(
                                 interactive: true,
                                 resume: Some(rid),
                                 messages: Vec::new(),
-            images: Vec::new(),
+                                images: Vec::new(),
                             };
                             run_one(&config, store, &interactive_human, req).await?;
                         }
@@ -555,20 +555,36 @@ pub async fn run_interactive(
                     while !rest.is_empty() {
                         let tok = rest.remove(0);
                         match tok.as_str() {
-                            "--key" => { key = rest.first().cloned(); if key.is_some() { rest.remove(0); } }
-                            "--base-url" => { base_url = rest.first().cloned(); if base_url.is_some() { rest.remove(0); } }
+                            "--key" => {
+                                key = rest.first().cloned();
+                                if key.is_some() {
+                                    rest.remove(0);
+                                }
+                            }
+                            "--base-url" => {
+                                base_url = rest.first().cloned();
+                                if base_url.is_some() {
+                                    rest.remove(0);
+                                }
+                            }
                             _ => {}
                         }
                     }
                     let provider = provider.unwrap_or_else(|| {
-                        if config.model.starts_with("anthropic/") || config.model.starts_with("claude-") {
+                        if config.model.starts_with("anthropic/")
+                            || config.model.starts_with("claude-")
+                        {
                             "anthropic".into()
                         } else {
                             "gateway".into()
                         }
                     });
                     let key = key.or_else(|| std::env::var("FX_API_KEY").ok());
-                    match crate::auth::set_key(&provider, key.as_deref().unwrap_or(""), base_url.as_deref()) {
+                    match crate::auth::set_key(
+                        &provider,
+                        key.as_deref().unwrap_or(""),
+                        base_url.as_deref(),
+                    ) {
                         Ok(()) => {
                             if key.is_some() {
                                 println!("saved API key for provider `{provider}` (fxrs auth remove {provider} to clear)");
@@ -588,7 +604,9 @@ pub async fn run_interactive(
                         .map(|s| s.to_string())
                         .unwrap_or_default();
                     let provider = if provider.is_empty() {
-                        if config.model.starts_with("anthropic/") || config.model.starts_with("claude-") {
+                        if config.model.starts_with("anthropic/")
+                            || config.model.starts_with("claude-")
+                        {
                             "anthropic".to_string()
                         } else {
                             "gateway".to_string()
@@ -606,14 +624,24 @@ pub async fn run_interactive(
                 Slash::Credits => {
                     let store = match crate::auth::load() {
                         Ok(s) => s,
-                        Err(e) => { println!("auth error: {e:#}"); continue; }
+                        Err(e) => {
+                            println!("auth error: {e:#}");
+                            continue;
+                        }
                     };
                     let (key, _) = crate::auth::resolve_key("gateway", &store);
-                    match crate::gateway::fetch_credits(key.filter(|k| !k.is_empty()).as_deref(), None) {
+                    match crate::gateway::fetch_credits(
+                        key.filter(|k| !k.is_empty()).as_deref(),
+                        None,
+                    ) {
                         crate::gateway::CreditsResult::Loaded(snap) => {
                             println!("credits: {}", snap.balance.as_deref().unwrap_or("unknown"));
-                            if let Some(used) = &snap.used { println!("used: {used}"); }
-                            if let Some(plan) = &snap.plan { println!("plan: {plan}"); }
+                            if let Some(used) = &snap.used {
+                                println!("used: {used}");
+                            }
+                            if let Some(plan) = &snap.plan {
+                                println!("plan: {plan}");
+                            }
                         }
                         crate::gateway::CreditsResult::Failed { .. } => {
                             println!("credits: failed to fetch (set FX_GATEWAY_API_KEY or run `fxrs login`)");
@@ -623,11 +651,21 @@ pub async fn run_interactive(
                 }
                 Slash::Stats => {
                     let period = "7d";
-                    let totals = crate::usage::UsageStore::new().aggregate(crate::usage::parse_period(period));
+                    let totals = crate::usage::UsageStore::new()
+                        .aggregate(crate::usage::parse_period(period));
                     println!("usage (last {period}):");
-                    println!("  turns: {} · sessions: {} · input: {} · output: {} · total: {}",
-                        totals.turns, totals.sessions.len(), totals.input_tokens, totals.output_tokens, totals.total_tokens);
-                    println!("  tool calls: {} · steps: {} · est. cost: ${:.4}", totals.tool_calls, totals.steps, totals.cost_usd);
+                    println!(
+                        "  turns: {} · sessions: {} · input: {} · output: {} · total: {}",
+                        totals.turns,
+                        totals.sessions.len(),
+                        totals.input_tokens,
+                        totals.output_tokens,
+                        totals.total_tokens
+                    );
+                    println!(
+                        "  tool calls: {} · steps: {} · est. cost: ${:.4}",
+                        totals.tool_calls, totals.steps, totals.cost_usd
+                    );
                     continue;
                 }
                 Slash::Unknown(name) => {
@@ -741,7 +779,11 @@ pub fn render_slash_background(_config: &Config, arg: Option<&str>) -> String {
                     if store.list().is_empty() {
                         let _ = writeln!(out, "no background processes");
                     } else {
-                        let _ = writeln!(out, "{}", crate::background::render_supervise(&store.supervise()));
+                        let _ = writeln!(
+                            out,
+                            "{}",
+                            crate::background::render_supervise(&store.supervise())
+                        );
                     }
                 }
                 _ => {

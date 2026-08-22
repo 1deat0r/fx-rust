@@ -253,12 +253,10 @@ impl SessionStore {
         if !path.exists() {
             return Ok(None);
         }
-        let data = std::fs::read(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let data = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
         let text = String::from_utf8_lossy(&data);
         let sess: Option<Session> = serde_json::from_str(&text).ok().or_else(|| {
-            salvage_session(&text)
-                .or_else(|| salvage_partial_session(&text, workspace))
+            salvage_session(&text).or_else(|| salvage_partial_session(&text, workspace))
         });
         let Some(mut sess) = sess else {
             return Ok(None);
@@ -501,7 +499,10 @@ fn salvage_partial_session(text: &str, workspace: &Path) -> Option<Session> {
         };
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&candidate) {
             if let Some(obj) = v.as_object() {
-                if obj.contains_key("model") || obj.contains_key("id") || obj.contains_key("workspace") {
+                if obj.contains_key("model")
+                    || obj.contains_key("id")
+                    || obj.contains_key("workspace")
+                {
                     value = Some(v);
                     break;
                 }
@@ -522,11 +523,11 @@ fn salvage_partial_session(text: &str, workspace: &Path) -> Option<Session> {
         .and_then(|v| v.as_str())
         .and_then(|m| crate::permissions::PermissionMode::parse(m).ok())
         .unwrap_or_default();
-    let interactive = obj.get("interactive").and_then(|v| v.as_bool()).unwrap_or(false);
-    let updated_ms = obj
-        .get("updated_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u128;
+    let interactive = obj
+        .get("interactive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let updated_ms = obj.get("updated_ms").and_then(|v| v.as_u64()).unwrap_or(0) as u128;
     let messages: Vec<Message> = obj
         .get("messages")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -727,5 +728,4 @@ mod tests {
         assert!(store.recover(ws, "garbage").unwrap().is_none());
         store.delete_all_for(ws).unwrap();
     }
-
 }
