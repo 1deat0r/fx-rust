@@ -73,12 +73,16 @@ supervisor, native-PTY/tmux terminal sessions + `terminal exec` +
 `browser_terminal`, the terminal takeover decision layer, the model-response
 recovery policy (wired into the agent retry loop), usage recovery (durable
 marker registry + collector), and the local executor (direct read-only +
-approved shell). Phase 4 has started: modes/mods registries (builtin ask/code modes with
-read-only tool policy, `fxrs modes`) and the subagent domain model
-(commands, validation, notification policy) are landed; the full subagent
-execution/manager stack, ACP server, NAPI/WASM bindings + JS SDK, OAuth/auth
-stack, MCP elicitation / OAuth + keychain, GitHub `pr`/`issue` flows, and the
-`gh`/`review`/`capture`/`one-off` CLI commands remain.
+approved shell). Phase 4 (subagent & modes) is well underway: modes/mods registries
+(builtin ask/code modes + read-only tool policy, `fxrs modes`), the subagent
+domain model, the control store + manager state machine, operation ids,
+authority admission, the executor (`fxrs subagent run` runs pending work
+items through a nested agent under the child's own model/permission/tool
+authority), and relationship queries (`fxrs subagent list --tree`). Still
+ahead: subagent approval registry/persistence, communication store/manager,
+parent delivery projection, resume admission, subagent UI, then the TUI
+(Phase 5), ACP, SDK bindings, OAuth stack, GitHub flows, and the
+`gh`/`review`/`capture`/`one-off` CLI commands.
 See [ROADMAP.md](ROADMAP.md) for the parity matrix and phased plan.
 
 ## Status
