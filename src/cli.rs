@@ -737,6 +737,10 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             }
             Ok(0)
         }
+        Some("subagent") => {
+            let sub_args: Vec<String> = args.clone().cloned().collect();
+            return cmd_subagent(&sub_args).await;
+        }
         Some("modes") => {
             let cfg = config::resolve(&cwd())?;
             let registry = crate::modes::builtin_registry();
@@ -948,6 +952,376 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             show_cli_help();
             bail!("unknown command")
         }
+    }
+}
+
+async fn cmd_subagent(args: &[String]) -> anyhow::Result<i32> {
+    use crate::subagent_control::{apply_command, inspect_record, now_ms, SubagentStore};
+    use crate::subagent_domain::{
+        Command, CommandInput, ConfigureInput, InspectSection, LifecycleAction, LifecycleInput,
+        MessageInput, MessageMilestoneInput, MessageSendInput, RelationshipAction,
+        RelationshipInput,
+    };
+
+    let store = SubagentStore::new()?;
+    let sub = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
+    let sub = sub.unwrap_or("list");
+    match sub {
+        "create" => {
+            let name = args
+                .iter()
+                .position(|a| a == "create")
+                .and_then(|i| args.get(i + 1));
+            let prompt = args
+                .iter()
+                .position(|a| a == "create")
+                .and_then(|i| args.get(i + 2));
+            let Some(name) = name.filter(|s| !s.starts_with('-')) else {
+                bail!(
+                    "usage: fxrs subagent create <name> <prompt> [--permission-mode ask|auto|yolo]"
+                );
+            };
+            let Some(prompt) = prompt.filter(|s| !s.starts_with('-')) else {
+                bail!(
+                    "usage: fxrs subagent create <name> <prompt> [--permission-mode ask|auto|yolo]"
+                );
+            };
+            let permission_mode = args
+                .iter()
+                .position(|a| a == "--permission-mode")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let model = args
+                .iter()
+                .position(|a| a == "--model")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let input = CommandInput {
+                create: Some(crate::subagent_domain::CreateInput {
+                    name: Some(name.to_string()),
+                    mode: Some(crate::subagent_domain::Mode::OneOff),
+                    prompt: Some(prompt.to_string()),
+                    model,
+                    permission_mode,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let cmd = crate::subagent_domain::validate_command(&input)
+                .map_err(|e| anyhow::anyhow!("invalid create command: {e}"))?;
+            let child_id = format!("sub-{}", now_ms());
+            let record = store.create(
+                &child_id,
+                match &cmd {
+                    Command::Create(c) => c,
+                    _ => unreachable!(),
+                },
+            )?;
+            println!(
+                "created subagent `{}` (name: {}, state: {:?}, parent: {:?})",
+                record.child_id, record.configuration.name, record.state, record.parent_id
+            );
+            Ok(0)
+        }
+        "inspect" => {
+            let id = args
+                .iter()
+                .position(|a| a == "inspect")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent inspect <id> [--json]");
+            };
+            let wanted_json = args.iter().any(|a| a == "--json");
+            let Some(record) = store.load(id)? else {
+                bail!("no subagent `{id}`");
+            };
+            let sections = vec![
+                InspectSection::Status,
+                InspectSection::Messages,
+                InspectSection::Events,
+                InspectSection::Configuration,
+                InspectSection::Relationship,
+            ];
+            let inspection = inspect_record(&record, &sections);
+            if wanted_json {
+                println!("{}", serde_json::to_string_pretty(&inspection)?);
+                return Ok(0);
+            }
+            println!(
+                "subagent {} (state: {:?}, mode: {:?})",
+                inspection.child_id, inspection.state, inspection.mode
+            );
+            println!(
+                "  parent: {}",
+                inspection.parent_id.as_deref().unwrap_or("-")
+            );
+            println!("  generation: {}", inspection.generation);
+            println!("  name: {}", inspection.configuration.name);
+            println!(
+                "  model: {}",
+                inspection
+                    .configuration
+                    .model
+                    .as_deref()
+                    .unwrap_or("(default)")
+            );
+            println!("  queued work: {}", inspection.queue.len());
+            for w in &inspection.queue {
+                println!(
+                    "    - [{}] {} (from {})",
+                    debug_qs(&w.status),
+                    w.content,
+                    w.source_id
+                );
+            }
+            println!(
+                "  events: {} (after eviction {})",
+                inspection.events.len(),
+                record.events_evicted_through
+            );
+            for e in inspection.events.iter().rev().take(8) {
+                println!(
+                    "    - seq {} rev {}: {}",
+                    e.sequence,
+                    e.revision,
+                    debug_event(&e.kind)
+                );
+            }
+            Ok(0)
+        }
+        "message" => {
+            let kind = args
+                .iter()
+                .position(|a| a == "message")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            let id = args
+                .iter()
+                .position(|a| a == "message")
+                .and_then(|i| args.get(i + 2));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent message send|milestone <id> <content|name>");
+            };
+            let Some(payload) = args
+                .iter()
+                .position(|a| a == "message")
+                .and_then(|i| args.get(i + 3))
+            else {
+                bail!("usage: fxrs subagent message send|milestone <id> <content|name>");
+            };
+            let mut record = store
+                .load(id)?
+                .ok_or_else(|| anyhow::anyhow!("no subagent `{id}`"))?;
+            let input = match kind {
+                Some("send") => MessageInput {
+                    send: Some(MessageSendInput {
+                        id: id.to_string(),
+                        content: payload.to_string(),
+                    }),
+                    ..Default::default()
+                },
+                Some("milestone") => MessageInput {
+                    milestone: Some(MessageMilestoneInput {
+                        name: payload.to_string(),
+                    }),
+                    ..Default::default()
+                },
+                _ => bail!("usage: fxrs subagent message send|milestone <id> <content|name>"),
+            };
+            let cmd = crate::subagent_domain::validate_command(&CommandInput {
+                message: Some(input),
+                ..Default::default()
+            })
+            .map_err(|e| anyhow::anyhow!("invalid message command: {e}"))?;
+            let outcome = apply_command(&mut record, &cmd, now_ms())?;
+            store.save(&record)?;
+            println!("message applied: {outcome:?}");
+            Ok(0)
+        }
+        "configure" => {
+            let id = args
+                .iter()
+                .position(|a| a == "configure")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent configure <id> [--name N] [--model M] [--permission-mode P] [--effort E]");
+            };
+            let mut record = store
+                .load(id)?
+                .ok_or_else(|| anyhow::anyhow!("no subagent `{id}`"))?;
+            let name = args
+                .iter()
+                .position(|a| a == "--name")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let model = args
+                .iter()
+                .position(|a| a == "--model")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let permission_mode = args
+                .iter()
+                .position(|a| a == "--permission-mode")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let effort = args
+                .iter()
+                .position(|a| a == "--effort")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.to_string());
+            let input = CommandInput {
+                configure: Some(ConfigureInput {
+                    id: id.to_string(),
+                    name,
+                    model,
+                    effort,
+                    permission_mode,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let cmd = crate::subagent_domain::validate_command(&input)
+                .map_err(|e| anyhow::anyhow!("invalid configure command: {e}"))?;
+            let outcome = apply_command(&mut record, &cmd, now_ms())?;
+            store.save(&record)?;
+            println!("configured: {outcome:?}");
+            Ok(0)
+        }
+        "relationship" => {
+            let action = args
+                .iter()
+                .position(|a| a == "relationship")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            let id = args
+                .iter()
+                .position(|a| a == "relationship")
+                .and_then(|i| args.get(i + 2));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent relationship attach|detach|reparent <id> [parent-id]");
+            };
+            let parent = args
+                .iter()
+                .position(|a| a == "relationship")
+                .and_then(|i| args.get(i + 3));
+            let mut record = store
+                .load(id)?
+                .ok_or_else(|| anyhow::anyhow!("no subagent `{id}`"))?;
+            let action = match action {
+                Some("attach") => RelationshipAction::Attach,
+                Some("detach") => RelationshipAction::Detach,
+                Some("reparent") => RelationshipAction::Reparent,
+                _ => bail!(
+                    "usage: fxrs subagent relationship attach|detach|reparent <id> [parent-id]"
+                ),
+            };
+            let input = CommandInput {
+                relationship: Some(RelationshipInput {
+                    action,
+                    id: id.to_string(),
+                    parent_id: parent.map(|s| s.to_string()),
+                }),
+                ..Default::default()
+            };
+            let cmd = crate::subagent_domain::validate_command(&input)
+                .map_err(|e| anyhow::anyhow!("invalid relationship command: {e}"))?;
+            let outcome = apply_command(&mut record, &cmd, now_ms())?;
+            store.save(&record)?;
+            println!("relationship: {outcome:?}");
+            Ok(0)
+        }
+        "lifecycle" => {
+            let action = args
+                .iter()
+                .position(|a| a == "lifecycle")
+                .and_then(|i| args.get(i + 1))
+                .map(|s| s.as_str());
+            let id = args
+                .iter()
+                .position(|a| a == "lifecycle")
+                .and_then(|i| args.get(i + 2));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent lifecycle cancel|resume|close|reopen <id>");
+            };
+            let action = match action {
+                Some("cancel") => LifecycleAction::Cancel,
+                Some("resume") => LifecycleAction::Resume,
+                Some("close") => LifecycleAction::Close,
+                Some("reopen") => LifecycleAction::Reopen,
+                _ => bail!("usage: fxrs subagent lifecycle cancel|resume|close|reopen <id>"),
+            };
+            let mut record = store
+                .load(id)?
+                .ok_or_else(|| anyhow::anyhow!("no subagent `{id}`"))?;
+            let input = CommandInput {
+                lifecycle: Some(LifecycleInput {
+                    id: id.to_string(),
+                    action,
+                }),
+                ..Default::default()
+            };
+            let cmd = crate::subagent_domain::validate_command(&input)
+                .map_err(|e| anyhow::anyhow!("invalid lifecycle command: {e}"))?;
+            let outcome = apply_command(&mut record, &cmd, now_ms())?;
+            store.save(&record)?;
+            println!("lifecycle: {outcome:?}");
+            Ok(0)
+        }
+        "list" => {
+            let records = store.list();
+            if records.is_empty() {
+                println!("no subagents");
+                return Ok(0);
+            }
+            for r in records {
+                println!(
+                    "{}  {:11}  parent={:11}  queue={}  events={}  name={}",
+                    r.child_id,
+                    format!("{:?}", r.state).to_lowercase(),
+                    r.parent_id.as_deref().unwrap_or("-"),
+                    r.queue.len(),
+                    r.events.len(),
+                    r.configuration.name
+                );
+            }
+            Ok(0)
+        }
+        "delete" => {
+            let id = args
+                .iter()
+                .position(|a| a == "delete")
+                .and_then(|i| args.get(i + 1));
+            let Some(id) = id.filter(|s| !s.starts_with('-')) else {
+                bail!("usage: fxrs subagent delete <id>");
+            };
+            store.delete(id)?;
+            println!("deleted subagent `{id}`");
+            Ok(0)
+        }
+        other => {
+            bail!("unknown subagent command: {other}");
+        }
+    }
+}
+
+fn debug_qs(s: &crate::subagent_domain::QueueStatus) -> String {
+    format!("{s:?}").to_lowercase()
+}
+
+fn debug_event(kind: &crate::subagent_domain::EventKind) -> String {
+    match kind {
+        crate::subagent_domain::EventKind::Created => "created".into(),
+        crate::subagent_domain::EventKind::MessageQueued { .. } => "message_queued".into(),
+        crate::subagent_domain::EventKind::RelationshipChanged { .. } => {
+            "relationship_changed".into()
+        }
+        crate::subagent_domain::EventKind::Configured => "configured".into(),
+        crate::subagent_domain::EventKind::LifecycleChanged { .. } => "lifecycle_changed".into(),
+        crate::subagent_domain::EventKind::WorkTransition { .. } => "work_transition".into(),
+        crate::subagent_domain::EventKind::MilestoneEmitted { .. } => "milestone_emitted".into(),
     }
 }
 
@@ -1242,6 +1616,7 @@ fn show_cli_help() {
          \x1b[32m  fxrs permissions\x1b[0m        show permission rules\n\
          \x1b[32m  fxrs models\x1b[0m             show resolved model / provider\n\
          \x1b[32m  fxrs modes\x1b[0m              list built-in modes (ask/code)\n\
+         \x1b[32m  fxrs subagent\x1b[0m          manage subagents (create/inspect/message/lifecycle)\n\
          \x1b[32m  fxrs doctor\x1b[0m            run environment diagnostics\n\
          \x1b[32m  fxrs usage [24h|7d|30d|all]\x1b[0m token usage and cost\n\
          \x1b[32m  fxrs settings\x1b[0m          show catalog + effective settings\n\

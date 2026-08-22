@@ -54,12 +54,32 @@ pub async fn run_subagent_named(
             create: Some(create),
             ..Default::default()
         });
-    let subagent_name = match validated {
-        Ok(crate::subagent_domain::Command::Create(cmd)) => cmd.configuration.name,
+    let (subagent_name, create_cmd) = match validated {
+        Ok(crate::subagent_domain::Command::Create(cmd)) => (cmd.configuration.name.clone(), cmd),
         Err(e) => {
             return Ok(err_json(format!("subagent: {e}")));
         }
         Ok(_) => unreachable!("create validates to create"),
+    };
+
+    // Durable control record: created before the run, transitioned to
+    // running, then completed/failed (upstream manager + work_events).
+    let child_id = format!("sub-{}", crate::util::now_ms() as usize);
+    let ctrl_store = match crate::subagent_control::SubagentStore::new() {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(err_json(format!(
+                "subagent: control store unavailable: {e:#}"
+            )));
+        }
+    };
+    let mut control = match ctrl_store.create(&child_id, &create_cmd) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(err_json(format!(
+                "subagent: create control record failed: {e:#}"
+            )));
+        }
     };
 
     let depth = DEPTH.with(|d| d.get());
@@ -96,14 +116,37 @@ pub async fn run_subagent_named(
         let human = QuietHuman;
         crate::agent::run(req, sub_config, &human, &store).await
     });
+    // Mark the work item running before execution (quietly; the record is
+    // best-effort bookkeeping and must never break the nested run).
+    let base = match ctrl_store.load(&child_id) {
+        Ok(Some(r)) => r,
+        _ => control.clone(),
+    };
+    control = base;
+    let t0 = crate::subagent_control::now_ms();
+    if let Some(work) = control.queue.first_mut() {
+        work.status = crate::subagent_domain::QueueStatus::Running;
+        control.state = crate::subagent_domain::State::Running;
+        control.updated_at_ms = t0;
+        let _ = ctrl_store.save(&control);
+    }
+
     let output = match fut.await {
         Ok(o) => o,
         Err(e) => {
             DEPTH.with(|d| d.set(depth));
+            let _ = finish_control(&ctrl_store, &mut control, &child_id, t0, false);
             return Ok(err_json(format!("subagent: nested run failed: {e:#}")));
         }
     };
     DEPTH.with(|d| d.set(depth));
+    let _ = finish_control(
+        &ctrl_store,
+        &mut control,
+        &child_id,
+        t0,
+        output.error.is_none(),
+    );
 
     Ok(summarize(&output, depth, &subagent_name))
 }
@@ -133,4 +176,45 @@ fn finish_name(f: FinishReason) -> &'static str {
         FinishReason::Error => "error",
         FinishReason::UserExit => "user_exit",
     }
+}
+
+/// Transition one subagent control record to its terminal state with a
+/// work-transition event (upstream work_events.appendRevision). Best-effort:
+/// failures must not surface to the parent model.
+fn finish_control(
+    store: &crate::subagent_control::SubagentStore,
+    control: &mut crate::subagent_control::SubagentRecord,
+    _child_id: &str,
+    started_ms: i64,
+    ok: bool,
+) -> Result<(), anyhow::Error> {
+    let now = crate::subagent_control::now_ms();
+    let target = if ok {
+        crate::subagent_domain::QueueStatus::Completed
+    } else {
+        crate::subagent_domain::QueueStatus::Failed
+    };
+    let transition = control
+        .queue
+        .first()
+        .map(|work| crate::subagent_control::TransitionInput {
+            work_item_id: work.id.clone(),
+            previous: Some(work.status),
+            current: target,
+            reason: None,
+        });
+    if let Some(work) = control.queue.first_mut() {
+        work.status = target;
+    }
+    if let Some(t) = transition {
+        crate::subagent_control::append_revision(control, &[t], now)
+            .map_err(|e| anyhow::anyhow!("append_revision failed: {e:?}"))?;
+    }
+    control.state = match target {
+        crate::subagent_domain::QueueStatus::Completed => crate::subagent_domain::State::Completed,
+        _ => crate::subagent_domain::State::Failed,
+    };
+    control.updated_at_ms = now;
+    let _ = started_ms;
+    store.save(control)
 }

@@ -312,6 +312,128 @@ pub enum QueueStatus {
     Interrupted,
 }
 
+// ---- queue / events / operations (upstream domain.zig) ----
+
+/// One queued work item (upstream `QueuedMessage`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QueuedMessage {
+    pub id: String,
+    pub source_id: String,
+    pub content: String,
+    pub root_user_intent_context: String,
+    pub root_user_messages: Vec<String>,
+    pub root_user_evidence_complete: bool,
+    pub status: QueueStatus,
+    pub cancellation_reason: Option<String>,
+    pub created_at_ms: i64,
+}
+
+impl Default for QueuedMessage {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            source_id: String::new(),
+            content: String::new(),
+            root_user_intent_context: String::new(),
+            root_user_messages: Vec::new(),
+            root_user_evidence_complete: false,
+            status: QueueStatus::Pending,
+            cancellation_reason: None,
+            created_at_ms: 0,
+        }
+    }
+}
+
+/// Append-only event kinds (upstream `EventKind` union).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EventKind {
+    Created,
+    MessageQueued {
+        message_id: String,
+    },
+    RelationshipChanged {
+        previous_parent_id: Option<String>,
+        parent_id: Option<String>,
+    },
+    Configured,
+    LifecycleChanged {
+        previous: State,
+        current: State,
+    },
+    WorkTransition {
+        work_item_id: String,
+        previous: Option<QueueStatus>,
+        current: QueueStatus,
+        reason: Option<String>,
+    },
+    MilestoneEmitted {
+        operation_id: String,
+        source_child_id: String,
+        target_parent_id: String,
+        work_item_id: String,
+        name: String,
+    },
+}
+
+/// One append-only event (upstream `Event`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Event {
+    pub sequence: u64,
+    pub revision: u64,
+    pub id: String,
+    pub timestamp_ms: i64,
+    pub kind: EventKind,
+}
+
+/// Outcome code returned on operation receipts (upstream `OutcomeCode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeCode {
+    Created,
+    MessageQueued,
+    RelationshipChanged,
+    Configured,
+    LifecycleChanged,
+    MilestoneEmitted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationIdentitySource {
+    Model,
+    Human,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationIdentityAuthority {
+    ProcessLocal,
+    Manager,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundOperationIdentity {
+    pub source: OperationIdentitySource,
+    pub epoch: u64,
+    pub authority: OperationIdentityAuthority,
+}
+
+/// Operation receipt for a completed command (upstream `OperationReceipt`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationReceipt {
+    pub id: String,
+    pub request_fingerprint: [u8; 32],
+    pub fingerprint: [u8; 32],
+    pub code: OutcomeCode,
+    pub target_id: String,
+    pub generation: u64,
+    pub event_sequence: u64,
+    pub identity_source: Option<OperationIdentitySource>,
+    pub identity_epoch: Option<u64>,
+}
+
 /// Validation errors (upstream `ValidationError`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {

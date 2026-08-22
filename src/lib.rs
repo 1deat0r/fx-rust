@@ -35,6 +35,7 @@ pub mod sessions;
 pub mod settings_catalog;
 pub mod shell_command;
 pub mod slash_commands;
+pub mod subagent_control;
 pub mod subagent_domain;
 pub mod tape;
 pub mod terminal;
@@ -64,9 +65,10 @@ pub mod test_env {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    /// Run `f` while holding the env guard.
+    /// Run `f` while holding the env guard. Recovers from a poisoned lock
+    /// (a previous test's panic) so one failure cannot cascade.
     pub fn with<R>(f: impl FnOnce() -> R) -> R {
-        let _guard = lock().lock().unwrap();
+        let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
         f()
     }
 }
