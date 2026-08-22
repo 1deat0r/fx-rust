@@ -14,7 +14,7 @@
 | Upstream size | 549 Zig files, ~688K LOC (devbox executor removed upstream before v0.0.5) |
 | Our size today | ~33.7K Rust LOC, 83 source files (incl. tests), 317 tests |
 | Parity definition | Behavioral + surface 1:1: same CLI, tools, config, sessions, hooks, MCP, ACP, TUI, auth, usage reporting, SDK/bindings |
-| Latest | 2026-08-22: skills subsystem landed (`src/skills/`); background `stop` group-kill fix; CLI parity batch — `fxrs pr`/`issue` (agent-drafted + `--create` publish), `fxrs credits`/`balance` (gateway `/coding-agent/v1/credits`, loopback-trusted), `fxrs provider` |
+| Latest | 2026-08-22: skills subsystem landed (`src/skills/`); background `stop` group-kill fix; CLI parity batch — `fxrs pr`/`issue`, `fxrs credits`/`balance` (gateway `/coding-agent/v1/credits`), `fxrs provider`, `fxrs session migrate|recover`, `fxrs sessions --all` |
 
 ## Parity matrix
 
@@ -27,7 +27,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | Permission gates ask/auto/yolo + glob rules + session grants | 🟡 | `src/permissions.rs`; sandbox + deterministic auto-classifier landed (P1); approval flows pending |
 | Providers: gateway/OpenAI-compatible + Anthropic + SSE | 🟡 | `src/providers/`; missing model catalog/capabilities, context limits |
 | Agent streaming loop, steps, tool-choice, text-tool-call fallback | 🟡 | `src/agent.rs`; auto mode now runs sandbox+classifier first, model reviewer on undetermined (P1) |
-| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1); **codec v2 + migration, latest pointer, per-session usage, delete, JSON output landed (P1)** |
+| Sessions (JSON, resume, per-session grants) | 🟡 | `src/sessions.rs`; usage.jsonl sidecar landed (P1); **codec v2 + migration, latest pointer, per-session usage, delete, JSON output landed (P1)**; **`fxrs session migrate|recover` + `fxrs sessions --all` landed (2026-08-22)**: recover copies a valid session or salvages a truncated JSON session (balanced-prefix + field-boundary repair) into a fresh id |
 | Hooks (4 lifecycle events) | ✅ | `src/hooks.rs` — full definitions contract: HookDefinition catalog (loop point + purpose), Limits, AttentionKind, Scope/Invocation, call_id/step_index in PreToolUse, enriched `fxrs hooks` |
 | MCP stdio JSON-RPC | ✅ | `src/mcp.rs` — LSP-framed stdio client, per-call processes |
 | MCP remote transports | ✅ | **Phase 2 — `src/mcp_transport.rs`** — streamable HTTP (`transport: "http"`), legacy HTTP+SSE (`"sse"`), endpoint validation (https/loopback-only), protocol-version negotiation with `-32022` fallback, `Mcp-Session-Id` round-trip, `${VAR}` env/header expansion, bearer-token auth |

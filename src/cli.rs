@@ -58,7 +58,8 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
         Some("sessions") => {
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
-            let sessions = store.list(Some(&cfg.workspace))?;
+            let wants_all = args.clone().any(|a| a == "--all");
+            let sessions = store.list(if wants_all { None } else { Some(&cfg.workspace) })?;
             let wants_json = args.clone().any(|a| a == "--json");
             if wants_json {
                 let arr: Vec<_> = sessions
@@ -114,6 +115,80 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
             let wants_delete = args.clone().any(|a| a == "--delete");
             let cfg = Arc::new(config::resolve(&cwd())?);
             let store = SessionStore::new()?;
+
+            // `session migrate <id|last>` — upgrade a saved session in place.
+            // `session recover <id|last>` — copy a recoverable session into a
+            // fresh session (salvaging corrupt files).
+            let sub = id.as_deref().map(|s| s.to_string());
+            match sub.as_deref() {
+                Some("migrate") => {
+                    let target = args.next().map(|s| s.to_string());
+                    let target = match target.as_deref() {
+                        Some("last" | "latest") => store
+                            .latest(&cfg.workspace)?
+                            .map(|s| s.id),
+                        other => other.map(str::to_string),
+                    };
+                    let target = target.ok_or_else(|| {
+                        anyhow::anyhow!("usage: fxrs session migrate <id|last> [--json]")
+                    })?;
+                    return match store.load(&cfg.workspace, &target)? {
+                        Some(mut sess) => {
+                            let migrated = store.migrate(&mut sess);
+                            if migrated {
+                                store.save(&sess)?;
+                            }
+                            if wants_json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "id": sess.id,
+                                        "schema_version": sess.schema_version,
+                                        "migrated": migrated,
+                                    }))?
+                                );
+                            } else if migrated {
+                                println!("migrated session {} -> schema v{}", sess.id, sess.schema_version);
+                            } else {
+                                println!("session {} is already current (schema v{})", sess.id, sess.schema_version);
+                            }
+                            Ok(0)
+                        }
+                        None => bail!("no session `{target}`"),
+                    };
+                }
+                Some("recover") => {
+                    let target = args.next().map(|s| s.to_string());
+                    let target = match target.as_deref() {
+                        Some("last" | "latest") => store
+                            .latest(&cfg.workspace)?
+                            .map(|s| s.id),
+                        other => other.map(str::to_string),
+                    };
+                    let target = target.ok_or_else(|| {
+                        anyhow::anyhow!("usage: fxrs session recover <id|last> [--json]")
+                    })?;
+                    return match store.recover(&cfg.workspace, &target)? {
+                        Some(new_id) => {
+                            if wants_json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "source": target,
+                                        "recovered": new_id,
+                                    }))?
+                                );
+                            } else {
+                                println!("recovered session {target} -> {new_id}");
+                            }
+                            Ok(0)
+                        }
+                        None => bail!("no recoverable session `{target}`"),
+                    };
+                }
+                _ => {}
+            }
+
             // `session last` / `session latest` resolve via the latest pointer.
             if id
                 .as_deref()
@@ -123,7 +198,7 @@ pub async fn run_main(args: Vec<String>) -> Result<i32> {
                 id = store.latest(&cfg.workspace)?.map(|s| s.id);
             }
             let id = id.ok_or_else(|| {
-                anyhow::anyhow!("usage: fxrs session <id|last> [--json] [--delete]")
+                anyhow::anyhow!("usage: fxrs session <id|last|migrate|recover> [--json] [--delete]")
             })?;
             if wants_delete {
                 match store.delete(&cfg.workspace, &id)? {

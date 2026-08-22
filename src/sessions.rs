@@ -242,6 +242,51 @@ impl SessionStore {
         Ok(n)
     }
 
+    /// Recover a session file into a fresh session copy (upstream `session
+    /// recover`): valid sessions are migrated into a copy under a new id;
+    /// corrupt files are salvaged by walking to the largest balanced JSON
+    /// prefix that still parses, then built from surviving fields. Returns
+    /// the new session id, or None when the source is missing or
+    /// unrecoverable.
+    pub fn recover(&self, workspace: &Path, id: &str) -> Result<Option<String>> {
+        let path = self.dir_for(workspace).join(format!("{id}.json"));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = std::fs::read(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let text = String::from_utf8_lossy(&data);
+        let sess: Option<Session> = serde_json::from_str(&text).ok().or_else(|| {
+            salvage_session(&text)
+                .or_else(|| salvage_partial_session(&text, workspace))
+        });
+        let Some(mut sess) = sess else {
+            return Ok(None);
+        };
+        self.migrate(&mut sess);
+        // Recovery ids must never collide with the source or each other: a
+        // timestamp-based id can repeat within the same millisecond for the
+        // same workspace, which would overwrite the source file.
+        let base = new_session_id(workspace);
+        let mut n = 0u32;
+        let new_id = loop {
+            let candidate = if n == 0 {
+                format!("{base}-rec")
+            } else {
+                format!("{base}-rec{n}")
+            };
+            let path = self.dir_for(workspace).join(format!("{candidate}.json"));
+            if !path.exists() && candidate != id {
+                break candidate;
+            }
+            n += 1;
+        };
+        sess.id = new_id.clone();
+        sess.created_ms = crate::util::now_ms();
+        self.save(&sess)?;
+        Ok(Some(new_id))
+    }
+
     /// Delete one session file. Returns true when a file was removed.
     pub fn delete(&self, workspace: &Path, id: &str) -> Result<bool> {
         let path = self.dir_for(workspace).join(format!("{id}.json"));
@@ -355,6 +400,150 @@ fn simple_hash(s: &str) -> String {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
     format!("{:016x}", h.finish())
+}
+
+/// Best-effort JSON salvage: walk to the largest balanced-brace prefix and
+/// parse it as a `Session`. Returns the full parse if one is found.
+fn salvage_session(text: &str) -> Option<Session> {
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+    let mut depth: i32 = 0;
+    let mut in_str = false;
+    let mut escape = false;
+    for i in start..bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let prefix = &text[start..=i];
+                    if let Ok(s) = serde_json::from_str::<Session>(prefix) {
+                        return Some(s);
+                    }
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Salvage a truncated session from whatever fields survived in the largest
+/// parseable JSON prefix: every missing field falls back to defaults. Field
+/// candidates are (a) every top-level balanced `{...}`, and (b) every
+/// top-level field boundary closed with `}` (a truncated object whose
+/// closing brace was lost).
+fn salvage_partial_session(text: &str, workspace: &Path) -> Option<Session> {
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+    let mut depth: i32 = 0;
+    let mut in_str = false;
+    let mut escape = false;
+    // Byte offsets whose `[start..end]` slice is a parseable JSON object.
+    let mut ends: Vec<usize> = Vec::new();
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        let i = start + i;
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    ends.push(i + 1);
+                }
+            }
+            b',' if depth == 1 => {
+                // A complete top-level field followed by a truncated object:
+                // close the object here and try to parse.
+                ends.push(i);
+            }
+            _ => {}
+        }
+    }
+    // Try every candidate from longest to shortest; the longest parseable
+    // slice wins. Also try the literal full prefix in case it is complete.
+    ends.push(bytes.len());
+    ends.sort_unstable();
+    ends.dedup();
+    let mut value: Option<serde_json::Value> = None;
+    for &end in ends.iter().rev() {
+        if end <= start {
+            continue;
+        }
+        let slice = &text[start..end];
+        let candidate = if slice.trim_end().ends_with('}') || slice.trim_end().ends_with("]]") {
+            slice.to_string()
+        } else {
+            format!("{slice}}}")
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&candidate) {
+            if let Some(obj) = v.as_object() {
+                if obj.contains_key("model") || obj.contains_key("id") || obj.contains_key("workspace") {
+                    value = Some(v);
+                    break;
+                }
+            }
+        }
+    }
+    let value = value?;
+    // We already know the object branch; unwrap the borrow.
+    let value_owned = value;
+    let obj = value_owned.as_object()?.clone();
+    let model = obj
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let mode = obj
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .and_then(|m| crate::permissions::PermissionMode::parse(m).ok())
+        .unwrap_or_default();
+    let interactive = obj.get("interactive").and_then(|v| v.as_bool()).unwrap_or(false);
+    let updated_ms = obj
+        .get("updated_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u128;
+    let messages: Vec<Message> = obj
+        .get("messages")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    Some(Session {
+        schema_version: 0,
+        id: String::new(),
+        workspace: workspace.display().to_string(),
+        created_ms: 0,
+        updated_ms,
+        model,
+        mode,
+        interactive,
+        messages,
+        grants: Default::default(),
+        usage: Default::default(),
+    })
 }
 
 fn new_session_id(workspace: &Path) -> String {
@@ -489,4 +678,54 @@ mod tests {
         assert_eq!(loaded.messages.len(), 1);
         assert_eq!(loaded.messages[0].plain_text(), Some("hi"));
     }
+
+    #[test]
+    fn recover_copies_valid_session_to_new_id() {
+        let store = SessionStore::new().unwrap();
+        let ws = Path::new("/tmp/fxrs-sess-recover");
+        let sess = make_sess(&store, "/tmp/fxrs-sess-recover", 11);
+        store.save(&sess).unwrap();
+
+        let new_id = store.recover(ws, &sess.id).unwrap().expect("recovered");
+        assert_ne!(new_id, sess.id);
+        let recovered = store.load_or_error(ws, &new_id).unwrap();
+        assert_eq!(recovered.model, sess.model);
+        assert_eq!(recovered.messages.len(), sess.messages.len());
+        assert!(store.load(ws, &sess.id).unwrap().is_some(), "source kept");
+        store.delete_all_for(ws).unwrap();
+    }
+
+    #[test]
+    fn recover_salvages_truncated_json() {
+        let store = SessionStore::new().unwrap();
+        let ws = Path::new("/tmp/fxrs-sess-salvage");
+        let sess = make_sess(&store, "/tmp/fxrs-sess-salvage", 5);
+        let path = store.dir_for(ws).join(format!("{}.json", sess.id));
+        std::fs::create_dir_all(store.dir_for(ws)).unwrap();
+        // Write a truncated JSON file: cut mid-messages array.
+        let full = serde_json::to_string_pretty(&sess).unwrap();
+        let cut = full.find("\"messages\"").unwrap();
+        std::fs::write(&path, &full[..cut]).unwrap();
+
+        let new_id = store.recover(ws, &sess.id).unwrap().expect("salvaged");
+        let recovered = store.load_or_error(ws, &new_id).unwrap();
+        assert_eq!(recovered.model, "m");
+        // The truncated file had dropped messages; recovered still valid.
+        assert_eq!(recovered.schema_version, SCHEMA_VERSION);
+        store.delete_all_for(ws).unwrap();
+    }
+
+    #[test]
+    fn recover_missing_or_garbage_returns_none() {
+        let store = SessionStore::new().unwrap();
+        let ws = Path::new("/tmp/fxrs-sess-norecover");
+        assert!(store.recover(ws, "missing-id").unwrap().is_none());
+
+        let dir = store.dir_for(ws);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("garbage.json"), "{{{{ not json at all").unwrap();
+        assert!(store.recover(ws, "garbage").unwrap().is_none());
+        store.delete_all_for(ws).unwrap();
+    }
+
 }
